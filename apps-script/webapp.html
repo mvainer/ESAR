@@ -124,11 +124,11 @@
 
       <div class="form-row">
         <label for="title">Album Title *</label>
-        <input type="text" id="title" value="<?= prefillTitle ?>" placeholder="e.g. Spring Training 2025" autocomplete="off">
+        <input type="text" id="title" value="" placeholder="e.g. Spring Training 2025" autocomplete="off">
       </div>
       <div class="form-row">
         <label for="photosUrl">Google Photos URL *</label>
-        <input type="url" id="photosUrl" value="<?= prefillUrl ?>"
+        <input type="url" id="photosUrl" value=""
                placeholder="https://photos.google.com/album/…  or  https://photos.app.goo.gl/…">
         <div class="hint">
           Paste the album URL from your browser, or a share link (<strong>Share → Create link</strong> in Google Photos).
@@ -152,8 +152,8 @@
 </div>
 
 <script>
-  var PREFILL_URL  = document.getElementById('photosUrl').value.trim();
-  var _albums      = [];   // cached album list
+  var PREFILL_URL   = '';
+  var _albums       = [];   // cached album list
   var _prefilledRow = null; // row of the already-on-site album if pre-filled URL matches
 
   // ── Startup ────────────────────────────────────────────────────────────────
@@ -162,6 +162,15 @@
     var hash = window.location.hash;
     if (hash.indexOf('#bulk=') === 0) {
       showBulkView(hash.slice(6));
+    } else if (hash.indexOf('#single=') === 0) {
+      // Pre-fill from the single-album Chrome extension button
+      try {
+        var data = JSON.parse(decodeURIComponent(hash.slice(8)));
+        if (data.title) document.getElementById('title').value    = data.title;
+        if (data.url)   document.getElementById('photosUrl').value = data.url;
+        PREFILL_URL = data.url || '';
+      } catch(e) { /* ignore malformed hash */ }
+      showNormalView();
     } else {
       showNormalView();
     }

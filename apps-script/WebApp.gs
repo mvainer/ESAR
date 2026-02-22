@@ -27,12 +27,8 @@ function doGet(e) {
     }
   }
 
-  // HTML web app — pass single-album pre-fill values from the extension
-  var template = HtmlService.createTemplateFromFile('webapp');
-  template.prefillTitle = params.title || '';
-  template.prefillUrl   = params.url   || '';
-
-  return template.evaluate()
+  // HTML web app — pre-fill is handled client-side via URL hash (#single= / #bulk=)
+  return HtmlService.createHtmlOutputFromFile('webapp')
     .setTitle('ESAR Photos — Album Directory')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

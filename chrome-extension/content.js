@@ -51,10 +51,9 @@ function injectSingleFab() {
   fab.id = 'esar-fab';
   fab.onclick = function() {
     if (!checkConfig()) return;
-    var title = pageTitle();
-    var url   = location.href;
+    var data = { title: pageTitle(), url: location.href };
     window.open(
-      WEB_APP_URL + '?title=' + enc(title) + '&url=' + enc(url),
+      WEB_APP_URL + '#single=' + enc(JSON.stringify(data)),
       '_blank', 'noopener'
     );
   };
