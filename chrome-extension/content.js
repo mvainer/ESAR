@@ -52,10 +52,11 @@ function injectSingleFab() {
   fab.onclick = function() {
     if (!checkConfig()) return;
     var data = { title: pageTitle(), url: location.href };
-    window.open(
-      WEB_APP_URL + '#single=' + enc(JSON.stringify(data)),
-      '_blank', 'noopener'
-    );
+    // Store in chrome.storage so relay.js can forward it to the web app page.
+    // This survives Google auth redirects that strip URL hash fragments.
+    chrome.storage.local.set({ esar_pending_album: data }, function() {
+      window.open(WEB_APP_URL, '_blank', 'noopener');
+    });
   };
   document.body.appendChild(fab);
 }

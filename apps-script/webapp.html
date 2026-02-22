@@ -156,21 +156,29 @@
   var _albums       = [];   // cached album list
   var _prefilledRow = null; // row of the already-on-site album if pre-filled URL matches
 
+  // ── Pre-fill (called from relay.js postMessage or hash fallback) ───────────
+
+  function applyPrefill(data) {
+    if (data.title) document.getElementById('title').value    = data.title;
+    if (data.url)   document.getElementById('photosUrl').value = data.url;
+    if (data.url)   PREFILL_URL = data.url;
+    // If albums already loaded, run duplicate check immediately
+    if (_albums.length && PREFILL_URL) checkDuplicate(PREFILL_URL);
+  }
+
+  // Listen for data forwarded by relay.js (chrome.storage approach).
+  // Registered immediately so it catches messages that arrive before onload.
+  window.addEventListener('message', function(e) {
+    if (!e.data || e.data.type !== 'ESAR_PREFILL') return;
+    applyPrefill(e.data.data || {});
+  });
+
   // ── Startup ────────────────────────────────────────────────────────────────
 
   window.onload = function() {
     var hash = window.location.hash;
     if (hash.indexOf('#bulk=') === 0) {
       showBulkView(hash.slice(6));
-    } else if (hash.indexOf('#single=') === 0) {
-      // Pre-fill from the single-album Chrome extension button
-      try {
-        var data = JSON.parse(decodeURIComponent(hash.slice(8)));
-        if (data.title) document.getElementById('title').value    = data.title;
-        if (data.url)   document.getElementById('photosUrl').value = data.url;
-        PREFILL_URL = data.url || '';
-      } catch(e) { /* ignore malformed hash */ }
-      showNormalView();
     } else {
       showNormalView();
     }

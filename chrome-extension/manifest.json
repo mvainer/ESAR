@@ -1,12 +1,18 @@
 {
   "manifest_version": 3,
   "name": "ESAR Photos — Share to Website",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Add a Google Photos album to the ESAR website directory with one click.",
+  "permissions": ["storage"],
   "content_scripts": [
     {
       "matches": ["https://photos.google.com/*"],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://script.google.com/*"],
+      "js": ["relay.js"],
       "run_at": "document_idle"
     }
   ]
