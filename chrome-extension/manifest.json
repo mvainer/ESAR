@@ -11,9 +11,13 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://script.google.com/*"],
+      "matches": [
+        "https://script.google.com/*",
+        "https://*.googleusercontent.com/*"
+      ],
       "js": ["relay.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ]
 }
