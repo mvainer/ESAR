@@ -12,19 +12,13 @@
     return;
   }
 
-  console.log('[ESAR relay.js] active in iframe:', window.location.hostname);
-
   setTimeout(function() {
     chrome.storage.local.get(['esar_pending_album', 'esar_pending_bulk'], function(result) {
-      console.log('[ESAR relay.js] storage read:', JSON.stringify(result));
-
       if (result.esar_pending_bulk) {
         window.postMessage({ type: 'ESAR_BULK', albums: result.esar_pending_bulk }, '*');
-        console.log('[ESAR relay.js] posted bulk message');
         chrome.storage.local.remove('esar_pending_bulk');
       } else if (result.esar_pending_album) {
         window.postMessage({ type: 'ESAR_PREFILL', data: result.esar_pending_album }, '*');
-        console.log('[ESAR relay.js] posted single prefill message');
         chrome.storage.local.remove('esar_pending_album');
       }
     });

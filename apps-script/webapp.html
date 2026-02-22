@@ -169,7 +169,6 @@
   // Listen for data forwarded by relay.js (chrome.storage → postMessage).
   // Registered immediately so it catches messages that arrive before onload.
   window.addEventListener('message', function(e) {
-    console.log('[ESAR webapp] message received:', e.data);
     if (!e.data) return;
     if (e.data.type === 'ESAR_PREFILL') {
       applyPrefill(e.data.data || {});
