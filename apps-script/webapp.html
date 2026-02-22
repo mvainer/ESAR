@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESAR Photos — Album Directory</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Google Sans', Roboto, Arial, sans-serif; background: #f8f9fa; color: #202124; font-size: 14px; }
+
+    .topbar { background: #1a73e8; color: #fff; padding: 0 24px; height: 56px; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+    .topbar h1 { font-size: 18px; font-weight: 500; }
+
+    .page { max-width: 860px; margin: 28px auto; padding: 0 16px 48px; }
+
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12); padding: 24px; margin-bottom: 24px; }
+    .card h2 { font-size: 15px; font-weight: 500; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #e8eaed; }
+
+    /* ── Bulk results view ── */
+    #bulkView { display: none; }
+    .bulk-summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+    .stat { background: #f8f9fa; border-radius: 8px; padding: 14px 20px; text-align: center; flex: 1; min-width: 100px; }
+    .stat .num { font-size: 28px; font-weight: 600; line-height: 1; }
+    .stat .lbl { font-size: 12px; color: #5f6368; margin-top: 4px; }
+    .stat.added   .num { color: #137333; }
+    .stat.dupes   .num { color: #b06000; }
+    .stat.errors  .num { color: #c5221f; }
+
+    .result-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f1f3f4; }
+    .result-row:last-child { border-bottom: none; }
+    .result-icon { font-size: 16px; flex-shrink: 0; width: 22px; text-align: center; }
+    .result-title { flex: 1; font-size: 13px; line-height: 1.4; }
+    .result-status { font-size: 12px; white-space: nowrap; }
+    .result-status.added    { color: #137333; }
+    .result-status.duplicate { color: #b06000; }
+    .result-status.error    { color: #c5221f; }
+
+    /* ── Already-on-site banner ── */
+    .already-banner { display: none; background: #fef9e7; border: 1px solid #f9ab00; border-left: 4px solid #f9ab00; border-radius: 6px; padding: 16px 20px; margin-bottom: 20px; }
+    .already-banner h3 { font-size: 14px; font-weight: 600; color: #b06000; margin-bottom: 6px; }
+    .already-banner p  { font-size: 13px; color: #5f6368; margin-bottom: 12px; }
+    .btn-remove-banner { background: #d93025; color: #fff; border: none; border-radius: 4px; padding: 8px 20px; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .btn-remove-banner:hover { background: #b52a20; }
+    .btn-remove-banner:disabled { opacity: .5; cursor: default; }
+
+    /* ── Form ── */
+    .flash { display: none; padding: 12px 16px; border-radius: 4px; margin-bottom: 18px; font-size: 13px; line-height: 1.5; }
+    .flash.ok  { background: #e6f4ea; color: #137333; border-left: 4px solid #34a853; }
+    .flash.err { background: #fce8e6; color: #c5221f; border-left: 4px solid #ea4335; }
+
+    .form-row { margin-bottom: 16px; }
+    label { display: block; font-size: 11px; font-weight: 600; color: #5f6368; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    input[type="text"], input[type="url"] { width: 100%; border: 1px solid #dadce0; border-radius: 4px; padding: 10px 12px; font-size: 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
+    input:focus { border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26,115,232,.18); }
+    .hint { margin-top: 5px; font-size: 12px; color: #80868b; line-height: 1.5; }
+
+    .btn-primary { background: #1a73e8; color: #fff; border: none; border-radius: 4px; padding: 10px 24px; font-size: 14px; font-weight: 500; cursor: pointer; }
+    .btn-primary:hover { background: #1558b0; }
+    .btn-primary:disabled { opacity: .55; cursor: default; }
+
+    /* ── Album table ── */
+    table { width: 100%; border-collapse: collapse; }
+    thead th { text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; color: #5f6368; text-transform: uppercase; letter-spacing: .4px; border-bottom: 2px solid #e8eaed; }
+    tbody td { padding: 14px 12px; border-bottom: 1px solid #f1f3f4; vertical-align: middle; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #f8f9fa; }
+    .album-title { font-weight: 500; }
+    .album-date  { color: #5f6368; white-space: nowrap; }
+    .album-link  { color: #1a73e8; text-decoration: none; font-size: 13px; }
+    .album-link:hover { text-decoration: underline; }
+    .btn-remove { background: transparent; color: #d93025; border: 1px solid #d93025; border-radius: 4px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+    .btn-remove:hover { background: #fce8e6; }
+    .btn-remove:disabled { opacity: .5; cursor: default; }
+
+    .empty { text-align: center; padding: 40px; color: #80868b; }
+    .spinner-wrap { text-align: center; padding: 24px; color: #80868b; }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #e8eaed; border-top-color: #1a73e8; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .back-link { display: inline-block; margin-bottom: 20px; color: #1a73e8; text-decoration: none; font-size: 13px; cursor: pointer; }
+    .back-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span style="font-size:22px;">\uD83D\uDCF7</span>
+  <h1>ESAR Photos — Album Directory</h1>
+</div>
+
+<div class="page">
+
+  <!-- ══ BULK RESULTS VIEW (shown when opened from extension with #bulk=…) ══ -->
+  <div id="bulkView">
+    <div class="card">
+      <h2 id="bulkHeading">Adding albums…</h2>
+      <div id="bulkSpinner" class="spinner-wrap"><span class="spinner"></span> Adding albums to the directory…</div>
+      <div id="bulkResults" style="display:none">
+        <div class="bulk-summary">
+          <div class="stat added" ><div class="num" id="cntAdded">0</div><div class="lbl">Added</div></div>
+          <div class="stat dupes" ><div class="num" id="cntDupes">0</div><div class="lbl">Already on site</div></div>
+          <div class="stat errors"><div class="num" id="cntErrors">0</div><div class="lbl">Errors</div></div>
+        </div>
+        <div id="resultList"></div>
+      </div>
+    </div>
+    <a class="back-link" onclick="showNormalView()">← Manage directory / add more albums</a>
+  </div>
+
+  <!-- ══ NORMAL VIEW (single-add form + album table) ══ -->
+  <div id="normalView">
+
+    <div class="card">
+      <h2>Add Album to Website</h2>
+
+      <div class="already-banner" id="alreadyBanner">
+        <h3>This album is already on the website.</h3>
+        <p>Added on <span id="alreadyDate"></span>.</p>
+        <button class="btn-remove-banner" id="alreadyRemoveBtn" onclick="removePrefilled()">Remove from Website</button>
+      </div>
+
+      <div id="flash" class="flash"></div>
+
+      <div class="form-row">
+        <label for="title">Album Title *</label>
+        <input type="text" id="title" value="<?= prefillTitle ?>" placeholder="e.g. Spring Training 2025" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label for="photosUrl">Google Photos URL *</label>
+        <input type="url" id="photosUrl" value="<?= prefillUrl ?>"
+               placeholder="https://photos.google.com/album/…  or  https://photos.app.goo.gl/…">
+        <div class="hint">
+          Paste the album URL from your browser, or a share link (<strong>Share → Create link</strong> in Google Photos).
+          Members always see the latest photos when they click — updates automatically.
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="thumbnailUrl">Cover Photo URL <span style="font-weight:400;text-transform:none">(optional)</span></label>
+        <input type="url" id="thumbnailUrl" placeholder="https://lh3.googleusercontent.com/…">
+        <div class="hint">Right-click the album cover photo in Google Photos → <strong>Copy image address</strong>.</div>
+      </div>
+      <button class="btn-primary" id="addBtn" onclick="addAlbum()">Add to Directory</button>
+    </div>
+
+    <div class="card">
+      <h2>Current Albums</h2>
+      <div id="albumList"><div class="spinner-wrap"><span class="spinner"></span>Loading…</div></div>
+    </div>
+
+  </div><!-- /normalView -->
+</div>
+
+<script>
+  var PREFILL_URL  = document.getElementById('photosUrl').value.trim();
+  var _albums      = [];   // cached album list
+  var _prefilledRow = null; // row of the already-on-site album if pre-filled URL matches
+
+  // ── Startup ────────────────────────────────────────────────────────────────
+
+  window.onload = function() {
+    var hash = window.location.hash;
+    if (hash.indexOf('#bulk=') === 0) {
+      showBulkView(hash.slice(6));
+    } else {
+      showNormalView();
+    }
+  };
+
+  // ── View switching ─────────────────────────────────────────────────────────
+
+  function showBulkView(encodedAlbums) {
+    document.getElementById('bulkView').style.display   = 'block';
+    document.getElementById('normalView').style.display = 'none';
+    var albums;
+    try {
+      albums = JSON.parse(decodeURIComponent(encodedAlbums));
+    } catch(e) {
+      document.getElementById('bulkHeading').textContent = 'Error reading album data.';
+      document.getElementById('bulkSpinner').style.display = 'none';
+      return;
+    }
+    document.getElementById('bulkHeading').textContent =
+      'Adding ' + albums.length + ' album' + (albums.length === 1 ? '' : 's') + '\u2026';
+    processBulk(albums);
+  }
+
+  function showNormalView() {
+    document.getElementById('bulkView').style.display   = 'none';
+    document.getElementById('normalView').style.display = 'block';
+    // Clear hash so Back doesn't re-trigger bulk mode
+    if (history.replaceState) history.replaceState(null, '', location.pathname + location.search);
+    loadAlbums();
+  }
+
+  // ── Bulk processing ────────────────────────────────────────────────────────
+
+  function processBulk(albums) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        document.getElementById('bulkSpinner').style.display = 'none';
+        if (!result.success) {
+          document.getElementById('bulkHeading').textContent = 'Error: ' + esc(result.error);
+          return;
+        }
+        renderBulkResults(result.results);
+      })
+      .withFailureHandler(function(e) {
+        document.getElementById('bulkSpinner').style.display = 'none';
+        document.getElementById('bulkHeading').textContent = 'Error: ' + esc(e.message);
+      })
+      .serverAddAlbumsBulk(JSON.stringify(albums));
+  }
+
+  function renderBulkResults(results) {
+    var added  = results.filter(function(r) { return r.status === 'added'; }).length;
+    var dupes  = results.filter(function(r) { return r.status === 'duplicate'; }).length;
+    var errors = results.filter(function(r) { return r.status === 'error'; }).length;
+
+    document.getElementById('bulkHeading').textContent =
+      'Done \u2014 ' + added + ' album' + (added === 1 ? '' : 's') + ' added to the website.';
+    document.getElementById('cntAdded').textContent  = added;
+    document.getElementById('cntDupes').textContent  = dupes;
+    document.getElementById('cntErrors').textContent = errors;
+
+    var listEl = document.getElementById('resultList');
+    listEl.innerHTML = results.map(function(r) {
+      var icon  = r.status === 'added' ? '\u2705' : r.status === 'duplicate' ? '\u26A0\uFE0F' : '\u274C';
+      var label = r.status === 'added' ? 'Added' : r.status === 'duplicate' ? 'Already on site' : ('Error: ' + esc(r.error || ''));
+      return '<div class="result-row">' +
+        '<span class="result-icon">' + icon + '</span>' +
+        '<span class="result-title">' + esc(r.title) + '</span>' +
+        '<span class="result-status ' + r.status + '">' + label + '</span>' +
+        '</div>';
+    }).join('');
+
+    document.getElementById('bulkResults').style.display = 'block';
+  }
+
+  // ── Normal view ────────────────────────────────────────────────────────────
+
+  function loadAlbums() {
+    document.getElementById('albumList').innerHTML =
+      '<div class="spinner-wrap"><span class="spinner"></span>Loading\u2026</div>';
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result.success) {
+          document.getElementById('albumList').innerHTML =
+            '<div class="empty">Error: ' + esc(result.error) + '</div>';
+          return;
+        }
+        _albums = result.albums;
+        renderAlbums(_albums);
+        if (PREFILL_URL) checkDuplicate(PREFILL_URL);
+      })
+      .withFailureHandler(function(e) {
+        document.getElementById('albumList').innerHTML =
+          '<div class="empty">Could not load albums: ' + esc(e.message) + '</div>';
+      })
+      .serverGetAlbums();
+  }
+
+  function renderAlbums(albums) {
+    var el = document.getElementById('albumList');
+    if (!albums.length) {
+      el.innerHTML = '<div class="empty">No albums yet \u2014 use the form above to add the first one.</div>';
+      return;
+    }
+    var rows = albums.map(function(a) {
+      var link = a.photosUrl
+        ? '<a class="album-link" href="' + esc(a.photosUrl) + '" target="_blank">\uD83D\uDCF7 View Album</a>'
+        : '\u2014';
+      return '<tr><td class="album-title">' + esc(a.title) + '</td>' +
+        '<td class="album-date">' + esc(a.dateAdded) + '</td>' +
+        '<td>' + link + '</td>' +
+        '<td><button class="btn-remove" onclick="removeAlbum(' + a.row + ',this)">Remove</button></td></tr>';
+    }).join('');
+    el.innerHTML = '<table><thead><tr><th>Album</th><th>Date Added</th><th>Link</th><th></th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+  }
+
+  // ── Duplicate check (when single-album pre-fill is present) ───────────────
+
+  function checkDuplicate(url) {
+    for (var i = 0; i < _albums.length; i++) {
+      if (_albums[i].photosUrl === url) {
+        _prefilledRow = _albums[i].row;
+        document.getElementById('alreadyDate').textContent = _albums[i].dateAdded || 'a previous date';
+        document.getElementById('alreadyBanner').style.display = 'block';
+        document.getElementById('addBtn').disabled = true;
+        return;
+      }
+    }
+  }
+
+  function removePrefilled() {
+    if (!_prefilledRow) return;
+    var btn = document.getElementById('alreadyRemoveBtn');
+    btn.disabled    = true;
+    btn.textContent = 'Removing\u2026';
+    doRemove(_prefilledRow, function(ok) {
+      if (ok) {
+        document.getElementById('alreadyBanner').style.display = 'none';
+        document.getElementById('addBtn').disabled = false;
+        _prefilledRow = null;
+        loadAlbums();
+      } else {
+        btn.disabled    = false;
+        btn.textContent = 'Remove from Website';
+      }
+    });
+  }
+
+  // ── Add album ──────────────────────────────────────────────────────────────
+
+  function addAlbum() {
+    var title        = document.getElementById('title').value.trim();
+    var photosUrl    = document.getElementById('photosUrl').value.trim();
+    var thumbnailUrl = document.getElementById('thumbnailUrl').value.trim();
+
+    if (!title)     { flash('Album title is required.', 'err'); return; }
+    if (!photosUrl) { flash('Google Photos URL is required.', 'err'); return; }
+
+    var btn = document.getElementById('addBtn');
+    btn.disabled    = true;
+    btn.textContent = 'Adding\u2026';
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        btn.disabled    = false;
+        btn.textContent = 'Add to Directory';
+        if (result.success) {
+          flash('Album added to the website!', 'ok');
+          document.getElementById('title').value        = '';
+          document.getElementById('photosUrl').value    = '';
+          document.getElementById('thumbnailUrl').value = '';
+          PREFILL_URL = '';
+          loadAlbums();
+        } else if (result.error === 'duplicate') {
+          flash('This album is already on the website.', 'err');
+        } else {
+          flash(result.error, 'err');
+        }
+      })
+      .withFailureHandler(function(e) {
+        btn.disabled    = false;
+        btn.textContent = 'Add to Directory';
+        flash('Error: ' + e.message, 'err');
+      })
+      .serverAddAlbum(title, photosUrl, thumbnailUrl);
+  }
+
+  // ── Remove album ───────────────────────────────────────────────────────────
+
+  function removeAlbum(row, btn) {
+    if (!confirm('Remove this album from the website directory?')) return;
+    btn.disabled    = true;
+    btn.textContent = 'Removing\u2026';
+    doRemove(row, function(ok) {
+      if (ok) loadAlbums();
+      else { btn.disabled = false; btn.textContent = 'Remove'; }
+    });
+  }
+
+  function doRemove(row, cb) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) { cb(true); }
+        else { flash(result.error, 'err'); cb(false); }
+      })
+      .withFailureHandler(function(e) {
+        flash('Error: ' + e.message, 'err');
+        cb(false);
+      })
+      .serverRemoveAlbum(row);
+  }
+
+  // ── Utilities ──────────────────────────────────────────────────────────────
+
+  function flash(msg, type) {
+    var el = document.getElementById('flash');
+    el.textContent   = msg;
+    el.className     = 'flash ' + type;
+    el.style.display = 'block';
+    clearTimeout(el._t);
+    if (type === 'ok') el._t = setTimeout(function() { el.style.display='none'; }, 6000);
+  }
+
+  function esc(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(String(s || '')));
+    return d.innerHTML;
+  }
+</script>
+</body>
+</html>

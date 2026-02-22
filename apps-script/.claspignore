@@ -1,4 +1,5 @@
-# Ignore everything except .gs files and the Apps Script manifest
+# Ignore everything except .gs files, the manifest, and HTML templates
 **/**
 !*.gs
+!*.html
 !appsscript.json

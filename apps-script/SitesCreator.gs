@@ -1,7 +1,8 @@
 // SitesCreator.gs — Album directory maintained as a Google Sheet tab
 //
-// SitesApp (Classic Google Sites API) is not available for New Google Sites.
-// Instead, this module manages a "Album Directory" tab in the Dashboard spreadsheet.
+// The "Album Directory" tab in the Dashboard spreadsheet serves as the live
+// album index. Embed it in Google Sites once (Insert → Sheets), and it
+// updates automatically whenever albums are added or removed via the web app.
 //
 // EMBED IN GOOGLE SITES (one-time, manual):
 //   1. Open your Google Sites page in the editor
@@ -36,7 +37,6 @@ var SitesCreator = {
   },
 
   _initTab: function(tab) {
-    // Header row
     tab.appendRow(['', 'Album', 'Date Added', 'Photos', 'View Album (read-only link)']);
 
     var header = tab.getRange(1, 1, 1, 5);
@@ -45,7 +45,6 @@ var SitesCreator = {
     header.setFontColor('#ffffff');
     header.setFontSize(11);
 
-    // Column widths
     tab.setColumnWidth(1, 100);  // Thumbnail
     tab.setColumnWidth(2, 240);  // Album title
     tab.setColumnWidth(3, 120);  // Date
@@ -53,47 +52,37 @@ var SitesCreator = {
     tab.setColumnWidth(5, 200);  // Link
 
     tab.setFrozenRows(1);
-
-    // Default row height for data rows — tall enough for thumbnails
     tab.setRowHeight(1, 32);
   },
 
-  // ── Add Album Row ─────────────────────────────────────────────────────────
+  // ── Add Album ─────────────────────────────────────────────────────────────
 
   /**
-   * Add a new row to the Album Directory tab for a newly detected album.
-   * Returns the Google Photos URL (the read-only link for members).
+   * Add a new album row submitted via the admin web app.
+   *
+   * @param {string} title        Album title
+   * @param {string} photosUrl    Google Photos share link (photos.app.goo.gl/...)
+   * @param {string} thumbnailUrl Optional cover photo URL (right-click cover → Copy image address)
+   * @returns {string} The photosUrl that was saved
    */
-  addAlbum: function(album) {
-    var tab      = SitesCreator.getOrCreateTab();
-    var coverUrl = album.coverPhotoBaseUrl
-      ? album.coverPhotoBaseUrl + '=w120-h120-c'
-      : '';
-    var photosUrl = album.productUrl || '';
-    var title     = album.title || 'Untitled Album';
-    var count     = album.mediaItemsCount || 0;
-    var dateStr   = new Date().toLocaleDateString('en-US', {
+  addAlbumDirect: function(title, photosUrl, thumbnailUrl) {
+    var tab = SitesCreator.getOrCreateTab();
+
+    var dateStr = new Date().toLocaleDateString('en-US', {
       year: 'numeric', month: 'short', day: 'numeric'
     });
 
     var newRow = tab.getLastRow() + 1;
-    tab.setRowHeight(newRow, 90);
+    tab.setRowHeight(newRow, thumbnailUrl ? 90 : 40);
 
-    // Thumbnail via IMAGE formula (scales to fill cell)
-    if (coverUrl) {
-      tab.getRange(newRow, 1).setFormula('=IMAGE("' + coverUrl + '",1)');
+    if (thumbnailUrl) {
+      tab.getRange(newRow, 1).setFormula('=IMAGE("' + thumbnailUrl + '",1)');
     }
 
-    // Album title
     tab.getRange(newRow, 2).setValue(title).setFontWeight('bold').setVerticalAlignment('middle');
-
-    // Date added
     tab.getRange(newRow, 3).setValue(dateStr).setVerticalAlignment('middle');
+    tab.getRange(newRow, 4).setVerticalAlignment('middle');
 
-    // Photo count
-    tab.getRange(newRow, 4).setValue(count).setHorizontalAlignment('center').setVerticalAlignment('middle');
-
-    // Read-only Google Photos link
     if (photosUrl) {
       tab.getRange(newRow, 5)
         .setFormula('=HYPERLINK("' + photosUrl + '","📷 View Album")')
@@ -101,7 +90,6 @@ var SitesCreator = {
         .setVerticalAlignment('middle');
     }
 
-    // Alternating row background
     if (newRow % 2 === 0) {
       tab.getRange(newRow, 1, 1, 5).setBackground('#f8f9fa');
     }
@@ -109,7 +97,53 @@ var SitesCreator = {
     return photosUrl;
   },
 
-  // ── Get Sheet URL ─────────────────────────────────────────────────────────
+  // ── List Albums ───────────────────────────────────────────────────────────
+
+  /**
+   * Return all album rows as objects for the admin web app.
+   * Each item: { row, title, dateAdded, photosUrl }
+   */
+  listAlbums: function() {
+    var tab     = SitesCreator.getOrCreateTab();
+    var lastRow = tab.getLastRow();
+    if (lastRow <= 1) return [];
+
+    var values   = tab.getRange(2, 1, lastRow - 1, 5).getValues();
+    var formulas = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
+
+    var albums = [];
+    for (var i = 0; i < values.length; i++) {
+      var title = values[i][1];
+      if (!title) continue;  // skip blank rows
+
+      // Extract URL from =HYPERLINK("url","label") formula
+      var formula  = formulas[i][0];
+      var urlMatch = formula.match(/=HYPERLINK\("([^"]+)"/);
+      var photosUrl = urlMatch ? urlMatch[1] : String(values[i][4] || '');
+
+      albums.push({
+        row:       i + 2,
+        title:     String(title),
+        dateAdded: String(values[i][2] || ''),
+        photosUrl: photosUrl
+      });
+    }
+
+    return albums;
+  },
+
+  // ── Remove Album ──────────────────────────────────────────────────────────
+
+  /**
+   * Delete the album at the given 1-indexed sheet row.
+   */
+  removeAlbumByRow: function(row) {
+    var tab = SitesCreator.getOrCreateTab();
+    if (row <= 1) throw new Error('Cannot delete the header row.');
+    tab.deleteRow(row);
+  },
+
+  // ── URL Helper ────────────────────────────────────────────────────────────
 
   getDirectoryUrl: function() {
     var props = PropertiesService.getScriptProperties();
