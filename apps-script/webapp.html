@@ -166,34 +166,32 @@
     if (_albums.length && PREFILL_URL) checkDuplicate(PREFILL_URL);
   }
 
-  // Listen for data forwarded by relay.js (chrome.storage approach).
+  // Listen for data forwarded by relay.js (chrome.storage → postMessage).
   // Registered immediately so it catches messages that arrive before onload.
   window.addEventListener('message', function(e) {
-    if (!e.data || e.data.type !== 'ESAR_PREFILL') return;
-    applyPrefill(e.data.data || {});
+    console.log('[ESAR webapp] message received:', e.data);
+    if (!e.data) return;
+    if (e.data.type === 'ESAR_PREFILL') {
+      applyPrefill(e.data.data || {});
+    } else if (e.data.type === 'ESAR_BULK') {
+      showBulkView(e.data.albums);
+    }
   });
 
   // ── Startup ────────────────────────────────────────────────────────────────
 
   window.onload = function() {
-    var hash = window.location.hash;
-    if (hash.indexOf('#bulk=') === 0) {
-      showBulkView(hash.slice(6));
-    } else {
-      showNormalView();
-    }
+    // Always start with normal view; relay.js postMessage triggers bulk or prefill.
+    showNormalView();
   };
 
   // ── View switching ─────────────────────────────────────────────────────────
 
-  function showBulkView(encodedAlbums) {
+  function showBulkView(albums) {
     document.getElementById('bulkView').style.display   = 'block';
     document.getElementById('normalView').style.display = 'none';
-    var albums;
-    try {
-      albums = JSON.parse(decodeURIComponent(encodedAlbums));
-    } catch(e) {
-      document.getElementById('bulkHeading').textContent = 'Error reading album data.';
+    if (!Array.isArray(albums) || !albums.length) {
+      document.getElementById('bulkHeading').textContent = 'Error: no album data received.';
       document.getElementById('bulkSpinner').style.display = 'none';
       return;
     }

@@ -255,9 +255,10 @@ function submitSelected() {
     return { title: cb.dataset.title, url: cb.dataset.url, thumbnail: cb.dataset.thumbnail };
   });
 
-  // Pass albums via URL fragment (avoids GET param length limits)
-  var hash = '#bulk=' + enc(JSON.stringify(selected));
-  window.open(WEB_APP_URL + hash, '_blank', 'noopener');
+  // Store in chrome.storage — URL hash is stripped by Google auth redirects.
+  chrome.storage.local.set({ esar_pending_bulk: selected }, function() {
+    window.open(WEB_APP_URL, '_blank', 'noopener');
+  });
 }
 
 // ── Album scraping ────────────────────────────────────────────────────────────
