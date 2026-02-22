@@ -323,7 +323,19 @@ function getBestTitle(link) {
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 function pageTitle() {
-  return document.title.replace(/\s*[-\u2013\u2014]\s*Google Photos\s*$/i, '').trim();
+  // 1. document.title — Google Photos usually sets this to "Album Name – Google Photos"
+  var fromTitle = document.title.replace(/\s*[-\u2013\u2014|]\s*Google Photos\s*$/i, '').trim();
+  if (fromTitle && !/^google photos$/i.test(fromTitle)) return fromTitle;
+
+  // 2. Heading elements — Google Photos renders the album name in aria-label or text
+  var headings = document.querySelectorAll('[role="heading"], h1, h2');
+  for (var i = 0; i < headings.length; i++) {
+    var el = headings[i];
+    var t = (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (t && !/^google photos$/i.test(t) && t.length > 0 && t.length < 300) return t;
+  }
+
+  return '';
 }
 
 function makeFab(label, bg) {
