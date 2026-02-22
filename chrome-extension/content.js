@@ -7,7 +7,7 @@
 // SETUP: Replace the placeholder below with your deployed Apps Script web app URL.
 // (Apps Script editor → Deploy → Manage deployments → copy the Web App URL)
 
-const WEB_APP_URL = 'YOUR_WEB_APP_URL_HERE';
+const WEB_APP_URL = 'https://script.google.com/a/macros/kcesar.org/s/AKfycbx-N_1mFodZifFFypMSYhFzt7rv-qgeVj6FFaAfm3QHKseQhu2A7Yhcr8NvoTI1RPDY/exec';
 
 // ── SPA navigation watcher ────────────────────────────────────────────────────
 // Google Photos is a React SPA; URL changes don't trigger a page reload.
