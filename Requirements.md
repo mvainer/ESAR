@@ -95,7 +95,7 @@ web app (backend + member gallery).
 ## Gallery App — Member-Facing Gallery
 
 - Separate Apps Script project in `gallery-app/` — deployed independently of the admin app
-- Stable URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbxgW2uZqhNR1jMZTNWfhbtKXbf4bzXBnw9T1ZqrFfOlV7bGx5IamiEq3xkDREh-437HLA/exec`
+- Stable URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbzCxk6Yp663kDzBamCw0Rfg7GmQGo50ZoREkoCyvjq2kNi_LFGNUpDe6WCvYVRUPw2XkQ/exec`
 - Reads directly from the spreadsheet by hardcoded ID — no dependency on the admin app URL
 - Responsive card grid: `repeat(auto-fill, minmax(260px, 1fr))`
 - Each card shows: 200px thumbnail (or placeholder), album title, date added, "📷 View Album" chip
@@ -122,16 +122,16 @@ web app (backend + member gallery).
 ## Deployment
 
 ### Admin App (apps-script/)
-- Production deployment ID: `AKfycbzf2j2xVEiBFcEuQ3k7VDGNgBTuRUSrO27inCanaqr3nfAGO8_RbUUtWLdbCy73-EU`
-- Production URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbzf2j2xVEiBFcEuQ3k7VDGNgBTuRUSrO27inCanaqr3nfAGO8_RbUUtWLdbCy73-EU/exec`
+- Production deployment ID: `AKfycbwI_BNKfYjyw8v-WYrnpVmetL9pwIv85d0V7qFocSfo7cUosCAxxx9HynKNoWe1DB6Y`
+- Production URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbwI_BNKfYjyw8v-WYrnpVmetL9pwIv85d0V7qFocSfo7cUosCAxxx9HynKNoWe1DB6Y/exec`
 - **Deploy workflow (code update):**
   1. `clasp push --force` (from repo root — uses root `.clasp.json`)
   2. Apps Script UI as photos@kcesar.org → Deploy → New deployment → Web app → Execute as: Me / Anyone within kcesar.org → Deploy → Authorize
   3. Update deployment ID in `content.js`, `Requirements.md` → reload Chrome extension
 
 ### Gallery App (gallery-app/)
-- Deployment ID: `AKfycbxgW2uZqhNR1jMZTNWfhbtKXbf4bzXBnw9T1ZqrFfOlV7bGx5IamiEq3xkDREh-437HLA`
-- URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbxgW2uZqhNR1jMZTNWfhbtKXbf4bzXBnw9T1ZqrFfOlV7bGx5IamiEq3xkDREh-437HLA/exec`
+- Deployment ID: `AKfycbzCxk6Yp663kDzBamCw0Rfg7GmQGo50ZoREkoCyvjq2kNi_LFGNUpDe6WCvYVRUPw2XkQ`
+- URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbzCxk6Yp663kDzBamCw0Rfg7GmQGo50ZoREkoCyvjq2kNi_LFGNUpDe6WCvYVRUPw2XkQ/exec`
 - **Deploy workflow (code update):**
   1. `cd gallery-app && clasp push --force`
   2. Apps Script UI → New deployment → authorize → update Sites embed URL

@@ -14,7 +14,13 @@
 
 // ── Web App Entry Point ───────────────────────────────────────────────────────
 
-function doGet() {
+function doGet(e) {
+  // Diagnostic endpoint: ?diag=1
+  if (e && e.parameter && e.parameter.diag === '1') {
+    var data = serverDiag();
+    return ContentService.createTextOutput(JSON.stringify(data, null, 2))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   return HtmlService.createHtmlOutputFromFile('webapp')
     .setTitle('ESAR Photos — Album Directory')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
