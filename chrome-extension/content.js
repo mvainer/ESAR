@@ -446,8 +446,9 @@ function scrapeAlbums() {
     var title = getBestTitle(link);
     if (!title || title === 'Google Photos') return;
 
-    // Find thumbnail: try <img> first, then CSS background-image (Google Photos
-    // renders album covers as background-image divs, not <img> tags).
+    // Find thumbnail: try <img> first, then computed background-image.
+    // Google Photos sets album cover images via CSS classes (not inline style),
+    // so getComputedStyle is required to read the background-image value.
     var img = link.querySelector('img[src*="googleusercontent"]') ||
               link.querySelector('img[src*="lh3.google"]') ||
               link.querySelector('img');
@@ -455,13 +456,17 @@ function scrapeAlbums() {
     if (img && img.src) {
       thumbnail = img.src;
     } else {
-      var bgEls = link.querySelectorAll('[style]');
-      for (var j = 0; j < bgEls.length; j++) {
-        var bgStyle = bgEls[j].style.backgroundImage;
-        if (bgStyle && (bgStyle.indexOf('googleusercontent') !== -1 || bgStyle.indexOf('lh3.google') !== -1)) {
-          var bgMatch = bgStyle.match(/url\(["']?([^"')]+)["']?\)/);
-          if (bgMatch) { thumbnail = bgMatch[1]; break; }
-        }
+      var els = [link].concat(Array.prototype.slice.call(link.querySelectorAll('*')));
+      for (var j = 0; j < els.length && !thumbnail; j++) {
+        try {
+          var bg = window.getComputedStyle(els[j]).backgroundImage;
+          if (bg && bg !== 'none') {
+            var bgMatch = bg.match(/url\(["']?([^"')]+)["']?\)/);
+            if (bgMatch && (bgMatch[1].indexOf('googleusercontent') !== -1 || bgMatch[1].indexOf('lh3') !== -1)) {
+              thumbnail = bgMatch[1];
+            }
+          }
+        } catch(e) {}
       }
     }
 
@@ -474,14 +479,14 @@ function scrapeAlbums() {
 function getBestTitle(link) {
   // 1. aria-label on the link element itself
   var label = link.getAttribute('aria-label');
-  if (label && label !== 'Google Photos') return label.trim();
+  if (label && label !== 'Google Photos') return cleanAriaLabel(label);
 
   // 2. aria-label on the nearest ancestor that has one
   var el = link.parentElement;
   for (var i = 0; i < 4; i++) {
     if (!el) break;
     label = el.getAttribute('aria-label');
-    if (label && label !== 'Google Photos') return label.trim();
+    if (label && label !== 'Google Photos') return cleanAriaLabel(label);
     el = el.parentElement;
   }
 
@@ -498,6 +503,16 @@ function getBestTitle(link) {
   if (text && text !== 'Google Photos') return text;
 
   return '';
+}
+
+// Google Photos /albums aria-labels append slug metadata after underscores:
+// e.g. "Basic Training 2021-2022_2021-22_Course 2_Course 2 #"
+//                                ^ slug metadata starts here
+// Strip from the first underscore onwards; fall back to full label if empty.
+function cleanAriaLabel(label) {
+  if (!label) return '';
+  var cleaned = label.replace(/_.*$/, '').replace(/[#\s]+$/, '').trim();
+  return cleaned || label.trim();
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
