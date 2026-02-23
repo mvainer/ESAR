@@ -469,11 +469,12 @@ function submitSelected() {
   // Switch panel to non-blocking progress view — panel stays open and interactive.
   showProgressView(albums);
 
-  // ── Phase 1: Enable sharing and collect share URLs (sequential, unfocused windows) ──
-  // For each album: open tab → click Share → Create link → wait for URL → close tab.
-  // The share URL is returned directly from CLICK_SHARE_ONLY (no second collection pass).
+  // ── Phase 1: Enable sharing and collect share URLs (sequential, focused windows) ──
+  // For each album: open window → click Share → auto-click "Create link" if found →
+  // if not captured in 0.5 s, a banner in the window prompts the user to click it.
+  // Window closes automatically once the URL is captured.
   var done = 0;
-  updateProgressNote('Enabling sharing\u2026 (0\u2009/\u2009' + total + ')');
+  updateProgressNote('A window will open per album — click \u201CCreate link\u201D if prompted.');
 
   albums.reduce(function(chain, album) {
     return chain.then(function() {
@@ -973,6 +974,9 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     if (urlTimeout)      { clearTimeout(urlTimeout);     urlTimeout      = null; }
     if (diagInterval)    { clearInterval(diagInterval);  diagInterval    = null; }
     if (urlPollInterval) { clearInterval(urlPollInterval); urlPollInterval = null; }
+    // Remove the helper banner if the user no longer needs to act.
+    var banner = document.getElementById('esar-share-banner');
+    if (banner) banner.remove();
     relayLog('CLICK_SHARE_ONLY respond | reason=' + reason +
              ' | shareUrl=' + (shareUrl || '(none)') +
              ' | foundBtn=' + btnClicked + ' | attempts=' + btnAttempts +
@@ -1003,8 +1007,10 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     if (url) relayLog('diag | findShareUrl()=' + url);
   }, 3000);
 
-  // Watch the DOM for the share URL, and click "Create link" at most ONCE.
-  // (Clicking on every mutation could toggle link sharing off and on.)
+  // Watch the DOM for the share URL.
+  // When a "Create link"-type button appears, log full details about the element
+  // (outerHTML, rect, disabled, all sibling buttons) so we can identify the correct
+  // target, then attempt to click it. If URL doesn't appear in 500 ms, show banner.
   domObserver = new MutationObserver(function() {
     var url = findShareUrl();
     if (url) { respond(url, 'url-found'); return; }
@@ -1012,8 +1018,38 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
       var clBtn = findCreateLinkBtn();
       if (clBtn) {
         createLinkClicked = true;
-        relayLog('CLICK_SHARE_ONLY: clicking "' + clBtn.textContent.trim().substring(0, 40) + '"');
+
+        // ── Diagnostic: log everything about this element ──────────────────────
+        var rect = clBtn.getBoundingClientRect();
+        relayLog('CREATE_LINK_BTN found:' +
+                 ' tag=' + clBtn.tagName +
+                 ' disabled=' + clBtn.disabled +
+                 ' visible=' + (rect.width > 0 && rect.height > 0) +
+                 ' rect=' + JSON.stringify({ top: Math.round(rect.top), left: Math.round(rect.left), w: Math.round(rect.width), h: Math.round(rect.height) }));
+        relayLog('CREATE_LINK_BTN outerHTML: ' + clBtn.outerHTML.substring(0, 400));
+        // Log every clickable element on the page so we can compare
+        var allBtns = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
+        var btnSummary = [];
+        for (var bi = 0; bi < Math.min(allBtns.length, 30); bi++) {
+          var b = allBtns[bi];
+          var bRect = b.getBoundingClientRect();
+          if (bRect.width === 0 && bRect.height === 0) continue; // skip hidden
+          btnSummary.push('"' + (b.textContent || b.getAttribute('aria-label') || '').trim().substring(0, 30) + '"');
+        }
+        relayLog('Visible buttons on page: [' + btnSummary.join(', ') + ']');
+        // ──────────────────────────────────────────────────────────────────────
+
+        relayLog('CLICK_SHARE_ONLY: clicking element');
         clBtn.click();
+
+        // 500 ms to observe result; if URL still absent, show user banner
+        setTimeout(function() {
+          if (responded) return;
+          if (!findShareUrl()) {
+            relayLog('CLICK_SHARE_ONLY: click had no effect after 500ms — showing user banner');
+            injectShareBanner();
+          }
+        }, 500);
       }
     }
   });
@@ -1050,6 +1086,24 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
 
   return true;
 });
+
+// Inject a prominent banner into the album tab telling the user to click
+// "Create link" themselves. Shown when the automated click has no effect.
+// The banner is removed automatically when respond() closes the handler.
+function injectShareBanner() {
+  if (document.getElementById('esar-share-banner')) return; // already shown
+  var banner = document.createElement('div');
+  banner.id = 'esar-share-banner';
+  banner.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:2147483647',
+    'background:#1a73e8', 'color:#fff', 'text-align:center',
+    'padding:14px 20px', 'font-size:15px', 'font-weight:500',
+    'font-family:Google Sans,Roboto,Arial,sans-serif',
+    'box-shadow:0 2px 8px rgba(0,0,0,.3)', 'letter-spacing:.1px',
+  ].join(';');
+  banner.textContent = '\uD83D\uDD17  ESAR: Click \u201CCreate link\u201D in the Share dialog below \u2014 this window will close automatically.';
+  document.body.appendChild(banner);
+}
 
 // Find "Create link" / "Get link" / "Turn on link sharing" button.
 // Returns the element (without clicking it), or null.
