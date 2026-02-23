@@ -75,6 +75,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 
   // ── TRIGGER_SHARE ────────────────────────────────────────────────────────────
   if (message.type === 'TRIGGER_SHARE') {
+    console.log('[ESAR] TRIGGER_SHARE →', message.albumUrl);
     triggerShareAction(message.albumUrl).then(function() {
       sendResponse({ ok: true });
     });
@@ -83,6 +84,8 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
 
   // ── COLLECT_FROM_SHARING_PAGE ────────────────────────────────────────────────
   if (message.type === 'COLLECT_FROM_SHARING_PAGE') {
+    console.log('[ESAR] COLLECT_FROM_SHARING_PAGE for', message.albums.length, 'albums:',
+      message.albums.map(function(a) { return a.url; }));
     collectSharingPageUrls(message.albums).then(function(results) {
       sendResponse({ results: results });
     });
@@ -149,17 +152,31 @@ function triggerShareAction(albumUrl) {
     }, 25000);
 
     chrome.windows.create({ url: albumUrl, focused: false }, function(win) {
-      if (!win || !win.tabs || !win.tabs.length) { clearTimeout(globalTimeout); resolve(); return; }
+      if (!win || !win.tabs || !win.tabs.length) {
+        console.log('[ESAR] triggerShareAction: window create failed for', albumUrl);
+        clearTimeout(globalTimeout); resolve(); return;
+      }
       tabId = win.tabs[0].id;
+      console.log('[ESAR] triggerShareAction: window', win.id, 'tab', tabId, 'created for', albumUrl);
 
       function onTabUpdated(id, changeInfo, updatedTab) {
         if (id !== tabId || changeInfo.status !== 'complete') return;
-        if (!updatedTab.url || updatedTab.url.indexOf('photos.google.com') === -1) return;
+        if (!updatedTab.url || updatedTab.url.indexOf('photos.google.com') === -1) {
+          console.log('[ESAR] triggerShareAction: tab loaded unexpected URL:', updatedTab.url);
+          return;
+        }
         chrome.tabs.onUpdated.removeListener(onTabUpdated);
+        console.log('[ESAR] triggerShareAction: tab', tabId, 'loaded', updatedTab.url, '— waiting 5 s for SPA');
 
         // Give the SPA time to render interactive elements.
         setTimeout(function() {
-          chrome.tabs.sendMessage(tabId, { type: 'CLICK_SHARE_ONLY' }, function() {
+          console.log('[ESAR] triggerShareAction: sending CLICK_SHARE_ONLY to tab', tabId);
+          chrome.tabs.sendMessage(tabId, { type: 'CLICK_SHARE_ONLY' }, function(resp) {
+            if (chrome.runtime.lastError) {
+              console.log('[ESAR] triggerShareAction: CLICK_SHARE_ONLY error:', chrome.runtime.lastError.message);
+            } else {
+              console.log('[ESAR] triggerShareAction: CLICK_SHARE_ONLY response:', JSON.stringify(resp));
+            }
             // Wait for the share to register server-side before closing the tab.
             setTimeout(function() {
               clearTimeout(globalTimeout);
@@ -189,22 +206,37 @@ function collectSharingPageUrls(albums) {
 
     chrome.tabs.create({ url: 'https://photos.google.com/u/0/sharing', active: false }, function(tab) {
       tabId = tab.id;
+      console.log('[ESAR] collectSharingPageUrls: tab', tabId, 'created for /sharing');
 
       function onTabUpdated(id, changeInfo, updatedTab) {
         if (id !== tabId || changeInfo.status !== 'complete') return;
-        if (!updatedTab.url || updatedTab.url.indexOf('photos.google.com') === -1) return;
+        if (!updatedTab.url || updatedTab.url.indexOf('photos.google.com') === -1) {
+          console.log('[ESAR] collectSharingPageUrls: unexpected URL:', updatedTab.url);
+          return;
+        }
         chrome.tabs.onUpdated.removeListener(onTabUpdated);
+        console.log('[ESAR] collectSharingPageUrls: /sharing tab loaded', updatedTab.url, '— waiting 4 s');
 
         // Give the SPA time to render and populate script data.
         setTimeout(function() {
+          console.log('[ESAR] collectSharingPageUrls: sending WATCH_SHARING_PAGE_CONTENT');
           chrome.tabs.sendMessage(tabId, {
             type: 'WATCH_SHARING_PAGE_CONTENT',
             albums: albums
           }, function(response) {
             clearTimeout(globalTimeout);
             chrome.tabs.remove(tabId, function() {});
-            if (chrome.runtime.lastError) { resolve({}); return; }
-            resolve((response && response.results) || {});
+            if (chrome.runtime.lastError) {
+              console.log('[ESAR] collectSharingPageUrls: WATCH response error:', chrome.runtime.lastError.message);
+              resolve({}); return;
+            }
+            // Print all debug lines collected by the content script.
+            if (response && response.debug) {
+              response.debug.forEach(function(line) { console.log('[ESAR/sharing]', line); });
+            }
+            var results = (response && response.results) || {};
+            console.log('[ESAR] collectSharingPageUrls: final results:', JSON.stringify(results));
+            resolve(results);
           });
         }, 4000);
       }

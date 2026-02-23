@@ -951,15 +951,20 @@ function clickCreateLinkSilent() {
 // ── CLICK_SHARE_ONLY handler ──────────────────────────────────────────────────
 // Invoked by background.js when an album tab is opened for Phase 1 (triggering).
 // Finds the Share button, clicks it, then clicks "Create link" if needed.
-// Responds immediately — does NOT wait for or return the share URL.
+// Responds with { ok, pageUrl, foundBtn, btnDetails, clickedCreateLink, attempts }
+// so background.js can log everything to the service worker console.
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   if (msg.type !== 'CLICK_SHARE_ONLY') return false;
 
+  var pageUrl = location.href;
   var responded = false;
-  function finish() {
+
+  function finish(foundBtn, btnDetails, clickedCreateLink, attempts) {
     if (responded) return;
     responded = true;
-    sendResponse({ ok: true });
+    sendResponse({ ok: true, pageUrl: pageUrl, foundBtn: foundBtn,
+                   btnDetails: btnDetails, clickedCreateLink: clickedCreateLink,
+                   attempts: attempts });
   }
 
   var btnAttempts = 0;
@@ -968,17 +973,36 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     var btn = findShareButtonEl();
     if (btn) {
       clearInterval(btnInterval);
+      var btnDetails = {
+        tag:       btn.tagName,
+        ariaLabel: btn.getAttribute('aria-label'),
+        tooltip:   btn.getAttribute('data-tooltip'),
+        title:     btn.getAttribute('title'),
+        text:      (btn.textContent || '').trim().substring(0, 60)
+      };
       btn.click();
       // Give dialog time to open, then click "Create link" if needed.
       setTimeout(function() {
-        clickCreateLinkSilent();
-        finish();
+        var clicked = false;
+        // Patch clickCreateLinkSilent to detect whether it fired.
+        var keywords = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
+        var els = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
+        for (var i = 0; i < els.length; i++) {
+          var text = (els[i].textContent || els[i].getAttribute('aria-label') || '').toLowerCase().trim();
+          for (var k = 0; k < keywords.length; k++) {
+            if (text === keywords[k] || text.indexOf(keywords[k]) === 0) {
+              els[i].click(); clicked = true; break;
+            }
+          }
+          if (clicked) break;
+        }
+        finish(true, btnDetails, clicked, btnAttempts);
       }, 1500);
       return;
     }
     if (btnAttempts >= 20) { // 20 × 500 ms = 10 s
       clearInterval(btnInterval);
-      finish();
+      finish(false, null, false, btnAttempts);
     }
   }, 500);
 
@@ -1003,16 +1027,22 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   var SHARE_RE = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/;
 
   var results    = {};
+  var dbg        = []; // accumulated debug lines, returned to background for logging
   var responded  = false;
   var observer   = null;
   var watchTimer = null;
+
+  dbg.push('page: ' + location.href);
+  dbg.push('looking for album IDs: ' + JSON.stringify(albumIds));
+  dbg.push('total scripts on page: ' + document.scripts.length);
 
   function finish() {
     if (responded) return;
     responded = true;
     if (observer)   { observer.disconnect(); observer = null; }
     if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; }
-    sendResponse({ results: results });
+    dbg.push('finish() — final results: ' + JSON.stringify(results));
+    sendResponse({ results: results, debug: dbg });
   }
 
   function allFound() {
@@ -1036,11 +1066,13 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
       var relevant = albumIds.filter(function(id) { return id && !results[id] && src.indexOf(id) !== -1; });
       if (!relevant.length) continue;
 
+      dbg.push('script[' + s + '] len=' + src.length + ' contains IDs: ' + JSON.stringify(relevant));
+
       // Collect album-ID positions (first occurrence per ID in this script).
       var idItems = [];
       relevant.forEach(function(id) {
         var idx = src.indexOf(id);
-        if (idx !== -1) idItems.push({ id: id, pos: idx });
+        if (idx !== -1) { idItems.push({ id: id, pos: idx }); dbg.push('  ID ' + id + ' at pos ' + idx); }
       });
 
       // Collect all share-URL positions in this script.
@@ -1050,6 +1082,8 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
       while ((m = SHARE_RE_G.exec(src)) !== null) {
         urlItems.push({ url: m[0], pos: m.index });
       }
+      dbg.push('  share URLs found in script[' + s + ']: ' + urlItems.length +
+        (urlItems.length ? ' — ' + urlItems.map(function(u) { return u.url + '@' + u.pos; }).join(', ') : ''));
       if (!urlItems.length) continue;
 
       // Build candidate (albumId, shareUrl, distance) pairs within 4 KB.
@@ -1060,6 +1094,8 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           if (dist < 4000) candidates.push({ id: idItem.id, url: urlItem.url, dist: dist });
         });
       });
+      dbg.push('  candidates: ' + candidates.map(function(c) {
+        return c.id + ' → ' + c.url + ' dist=' + c.dist; }).join(' | '));
 
       // Greedy assignment: sort by distance ascending, assign shortest pairs first.
       // Each albumId and each shareUrl is used at most once.
@@ -1069,6 +1105,9 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
         if (!results[c.id] && !usedUrls[c.url]) {
           results[c.id] = c.url;
           usedUrls[c.url] = true;
+          dbg.push('  ASSIGNED ' + c.id + ' → ' + c.url + ' (dist ' + c.dist + ')');
+        } else {
+          dbg.push('  SKIPPED ' + c.id + ' → ' + c.url + ' (already used)');
         }
       });
     }
@@ -1081,6 +1120,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     albumIds.forEach(function(id) {
       if (!id || results[id]) return;
       var links = document.querySelectorAll('a[href*="' + id + '"]');
+      dbg.push('scanAlbumLinks: ' + id + ' — found ' + links.length + ' anchor(s) with this ID in href');
       for (var i = 0; i < links.length; i++) {
         var container = links[i];
         for (var depth = 0; depth < 8 && container; depth++) {
@@ -1088,18 +1128,29 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           var shareAnchors = container.querySelectorAll('a[href*="photos.app.goo.gl"]');
           if (shareAnchors.length) {
             var m = (shareAnchors[0].href || '').match(SHARE_RE);
-            if (m) { results[id] = m[0]; return; }
+            if (m) {
+              results[id] = m[0];
+              dbg.push('  DOM anchor match at depth ' + depth + ': ' + m[0]);
+              return;
+            }
           }
           // Also check visible text content for the share URL pattern.
           var m2 = (container.textContent || '').match(SHARE_RE);
-          if (m2) { results[id] = m2[0]; return; }
+          if (m2) {
+            results[id] = m2[0];
+            dbg.push('  DOM textContent match at depth ' + depth + ': ' + m2[0]);
+            return;
+          }
           container = container.parentElement;
         }
       }
     });
   }
 
+  var scanCount = 0;
   function scan() {
+    scanCount++;
+    if (scanCount === 1 || scanCount % 10 === 0) dbg.push('scan() #' + scanCount);
     scanScripts();
     scanAlbumLinks();
     if (allFound()) finish();
@@ -1109,12 +1160,16 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   scan();
 
   if (!allFound()) {
+    dbg.push('not all found after initial scan — starting MutationObserver (45 s timeout)');
     // Watch for DOM / script changes (lazy-loaded album cards).
     observer = new MutationObserver(function() { scan(); });
     observer.observe(document.body, { childList: true, subtree: true });
 
     // Respond with whatever we have after 45 s to avoid holding the channel open.
-    watchTimer = setTimeout(function() { finish(); }, 45000);
+    watchTimer = setTimeout(function() {
+      dbg.push('timeout reached — responding with partial results');
+      finish();
+    }, 45000);
   }
 
   return true;
