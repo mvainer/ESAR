@@ -112,11 +112,15 @@
     <a class="back-link" onclick="showNormalView()">← Manage directory / add more albums</a>
   </div>
 
-  <!-- ══ NORMAL VIEW (single-add form + album table) ══ -->
+  <!-- ══ NORMAL VIEW (album table + collapsible add form) ══ -->
   <div id="normalView">
 
-    <div class="card">
-      <h2>Add Album to Website</h2>
+    <!-- Add Album card — hidden by default, shown on prefill or manual trigger -->
+    <div class="card" id="addCard" style="display:none">
+      <h2 style="display:flex;align-items:center;justify-content:space-between;">
+        Add Album to Website
+        <button onclick="hideAddForm()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#5f6368;line-height:1;padding:0;" title="Close">×</button>
+      </h2>
 
       <div class="already-banner" id="alreadyBanner">
         <h3>This album is already on the website.</h3>
@@ -132,24 +136,21 @@
       </div>
       <div class="form-row">
         <label for="photosUrl">Share Link (for members) *</label>
-        <input type="url" id="photosUrl" value=""
-               placeholder="https://photos.app.goo.gl/…">
-        <div class="hint">
-          Use the <strong>share link</strong> so members can view the album without a Google Photos account.
-          In Google Photos: <strong>Share → Create link → Copy link</strong> (gives <code>photos.app.goo.gl/…</code>).
-          The Chrome extension fills this automatically when you open the Share dialog.
-        </div>
+        <input type="url" id="photosUrl" value="" placeholder="https://photos.app.goo.gl/…">
+        <div class="hint">Use the share link so members can view the album without a Google Photos account.</div>
       </div>
       <div class="form-row">
         <label for="thumbnailUrl">Cover Photo URL <span style="font-weight:400;text-transform:none">(optional)</span></label>
         <input type="url" id="thumbnailUrl" placeholder="https://lh3.googleusercontent.com/…">
-        <div class="hint">Right-click the album cover photo in Google Photos → <strong>Copy image address</strong>.</div>
       </div>
       <button class="btn-primary" id="addBtn" onclick="addAlbum()">Add to Directory</button>
     </div>
 
     <div class="card">
-      <h2>Current Albums</h2>
+      <h2 style="display:flex;align-items:center;justify-content:space-between;">
+        Current Albums
+        <button class="btn-primary" id="showAddBtn" onclick="showAddForm()" style="padding:7px 16px;font-size:13px;">+ Add Album</button>
+      </h2>
       <div id="albumList"><div class="spinner-wrap"><span class="spinner"></span>Loading…</div></div>
     </div>
 
@@ -164,11 +165,30 @@
   // ── Pre-fill (called from relay.js postMessage or hash fallback) ───────────
 
   function applyPrefill(data) {
-    if (data.title) document.getElementById('title').value    = data.title;
+    showAddForm();
+    if (data.title) document.getElementById('title').value     = data.title;
     if (data.url)   document.getElementById('photosUrl').value = data.url;
     if (data.url)   PREFILL_URL = data.url;
     // If albums already loaded, run duplicate check immediately
     if (_albums.length && PREFILL_URL) checkDuplicate(PREFILL_URL);
+  }
+
+  function showAddForm() {
+    document.getElementById('addCard').style.display   = 'block';
+    document.getElementById('showAddBtn').style.display = 'none';
+  }
+
+  function hideAddForm() {
+    document.getElementById('addCard').style.display    = 'none';
+    document.getElementById('showAddBtn').style.display = '';
+    document.getElementById('title').value              = '';
+    document.getElementById('photosUrl').value          = '';
+    document.getElementById('thumbnailUrl').value       = '';
+    document.getElementById('alreadyBanner').style.display = 'none';
+    document.getElementById('flash').style.display      = 'none';
+    document.getElementById('addBtn').disabled          = false;
+    PREFILL_URL   = '';
+    _prefilledRow = null;
   }
 
   // Listen for data forwarded by relay.js (chrome.storage → postMessage).
@@ -185,11 +205,8 @@
   // ── Startup ────────────────────────────────────────────────────────────────
 
   window.onload = function() {
-    // Set gallery link in topbar (same deployment URL + ?view=gallery)
-    var base = location.href.split('?')[0];
-    document.getElementById('galleryLink').href = base + '?view=gallery';
-
-    // Always start with normal view; relay.js postMessage triggers bulk or prefill.
+    document.getElementById('galleryLink').href =
+      'https://script.google.com/a/macros/kcesar.org/s/AKfycbxgW2uZqhNR1jMZTNWfhbtKXbf4bzXBnw9T1ZqrFfOlV7bGx5IamiEq3xkDREh-437HLA/exec';
     showNormalView();
   };
 
@@ -354,10 +371,7 @@
         btn.textContent = 'Add to Directory';
         if (result.success) {
           flash('Album added to the website!', 'ok');
-          document.getElementById('title').value        = '';
-          document.getElementById('photosUrl').value    = '';
-          document.getElementById('thumbnailUrl').value = '';
-          PREFILL_URL = '';
+          hideAddForm();
           loadAlbums();
         } else if (result.error === 'duplicate') {
           flash('This album is already on the website.', 'err');
