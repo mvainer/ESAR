@@ -226,11 +226,11 @@ function findShareUrl() {
     if (m) return m[0];
   }
 
-  // 4. Targeted page-data search: look for the share URL within 2 KB of THIS album's
-  //    own ID in the embedded script tags. Google Photos encodes the share URL in the
+  // 4. Targeted page-data search: look for the share URL after THIS album's own ID
+  //    in the embedded script tags. Google Photos encodes the share URL in the
   //    page's JS payload when the album already has link sharing enabled.
-  //    Searching near the album ID (not the full script) avoids picking up share URLs
-  //    that belong to other albums in the user's library.
+  //    We search ONLY after the album ID (not before) to avoid picking up share URLs
+  //    from neighboring albums that appear earlier in the script data.
   var albumId = (location.pathname.match(/\/album\/([A-Za-z0-9_-]{15,})/) || [])[1];
   if (albumId) {
     var scripts = document.scripts;
@@ -238,8 +238,10 @@ function findShareUrl() {
       var src = scripts[s].textContent || '';
       var idx = src.indexOf(albumId);
       if (idx === -1) continue;
-      // Search 500 chars before + 2000 chars after the album ID
-      var nearby = src.substring(Math.max(0, idx - 500), idx + 2000);
+      // Search 1000 chars AFTER the album ID only — the share URL follows the album
+      // ID in Google Photos' JSON payload. Searching before risks returning a URL
+      // that belongs to the previous album entry in the data.
+      var nearby = src.substring(idx, Math.min(src.length, idx + 1000));
       var ms = nearby.match(SHARE_RE);
       if (ms) return ms[0];
     }
@@ -928,7 +930,8 @@ function clickCreateLinkSilent() {
 // Finds the Share button, clicks it, enables link sharing (clicks "Create link"
 // ONCE if needed), then waits for the photos.app.goo.gl URL to appear in the DOM.
 // Responds with { ok, pageUrl, shareUrl, foundBtn, attempts, createLinkClicked }.
-// Every 3 s logs a diagnostic snapshot of the dialog state for debugging.
+// Key events are relayed to the service worker console via RELAY_LOG so they are
+// visible even after the tab closes.
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   if (msg.type !== 'CLICK_SHARE_ONLY') return false;
 
@@ -937,15 +940,26 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   var btnClicked        = false;
   var createLinkClicked = false;
   var btnAttempts       = 0;
-  var domObserver, urlTimeout, diagInterval;
+  var domObserver, urlTimeout, diagInterval, urlPollInterval;
 
-  console.log('[ESAR] CLICK_SHARE_ONLY start | visibility=' + document.visibilityState +
-              ' | url=' + pageUrl);
+  // Send a log line both to the local console and to the service worker so it
+  // appears in the extension's persistent console even after the tab closes.
+  function relayLog(text) {
+    console.log('[ESAR] ' + text);
+    try {
+      chrome.runtime.sendMessage({ type: 'RELAY_LOG', text: text }, function() {
+        if (chrome.runtime.lastError) {} // ignore — tab may be closing
+      });
+    } catch(e) {}
+  }
+
+  relayLog('CLICK_SHARE_ONLY start | visibility=' + document.visibilityState +
+           ' | url=' + pageUrl);
 
   // Fast path: album already has a share URL baked into the page data.
   var existing = findShareUrl();
   if (existing) {
-    console.log('[ESAR] CLICK_SHARE_ONLY: already shared → ' + existing);
+    relayLog('CLICK_SHARE_ONLY: already shared → ' + existing);
     sendResponse({ ok: true, pageUrl: pageUrl, shareUrl: existing,
                    foundBtn: false, alreadyShared: true, attempts: 0,
                    createLinkClicked: false });
@@ -955,36 +969,38 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   function respond(shareUrl, reason) {
     if (responded) return;
     responded = true;
-    if (domObserver)  { domObserver.disconnect();    domObserver  = null; }
-    if (urlTimeout)   { clearTimeout(urlTimeout);    urlTimeout   = null; }
-    if (diagInterval) { clearInterval(diagInterval); diagInterval = null; }
-    console.log('[ESAR] CLICK_SHARE_ONLY respond | reason=' + reason +
-                ' | shareUrl=' + (shareUrl || '(none)') +
-                ' | foundBtn=' + btnClicked + ' | attempts=' + btnAttempts +
-                ' | createLinkClicked=' + createLinkClicked);
+    if (domObserver)     { domObserver.disconnect();     domObserver     = null; }
+    if (urlTimeout)      { clearTimeout(urlTimeout);     urlTimeout      = null; }
+    if (diagInterval)    { clearInterval(diagInterval);  diagInterval    = null; }
+    if (urlPollInterval) { clearInterval(urlPollInterval); urlPollInterval = null; }
+    relayLog('CLICK_SHARE_ONLY respond | reason=' + reason +
+             ' | shareUrl=' + (shareUrl || '(none)') +
+             ' | foundBtn=' + btnClicked + ' | attempts=' + btnAttempts +
+             ' | createLinkClicked=' + createLinkClicked);
     sendResponse({ ok: true, pageUrl: pageUrl, shareUrl: shareUrl || '',
                    foundBtn: btnClicked, attempts: btnAttempts,
                    createLinkClicked: createLinkClicked });
   }
 
-  // Diagnostic snapshot every 3 s — tells us exactly what's in the Share dialog.
+  // Diagnostic snapshot every 3 s — relayed to service worker console.
   diagInterval = setInterval(function() {
     var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
     var clBtn   = findCreateLinkBtn();
-    console.log('[ESAR] CLICK_SHARE_ONLY diag | dialogs=' + dialogs.length +
-                ' | btnClicked=' + btnClicked +
-                ' | createLinkClicked=' + createLinkClicked +
-                ' | createLinkBtn=' + (clBtn ? '"' + clBtn.textContent.trim().substring(0, 40) + '"' : 'null'));
+    relayLog('diag | dialogs=' + dialogs.length +
+             ' | btnClicked=' + btnClicked +
+             ' | createLinkClicked=' + createLinkClicked +
+             ' | createLinkBtn=' + (clBtn ? '"' + clBtn.textContent.trim().substring(0, 40) + '"' : 'null'));
     for (var d = 0; d < dialogs.length; d++) {
-      console.log('[ESAR] dialog[' + d + '] text (300):', dialogs[d].textContent.replace(/\s+/g, ' ').trim().substring(0, 300));
+      relayLog('dialog[' + d + '] text: ' +
+               dialogs[d].textContent.replace(/\s+/g, ' ').trim().substring(0, 300));
       var inputs = dialogs[d].querySelectorAll('input, textarea');
       for (var i = 0; i < inputs.length; i++) {
-        console.log('[ESAR] dialog input[' + i + ']: value="' + (inputs[i].value || '') +
-                    '" placeholder="' + (inputs[i].placeholder || '') + '"');
+        relayLog('dialog input[' + i + ']: value="' + (inputs[i].value || '') +
+                 '" placeholder="' + (inputs[i].placeholder || '') + '"');
       }
     }
     var url = findShareUrl();
-    if (url) console.log('[ESAR] CLICK_SHARE_ONLY diag | findShareUrl()=' + url);
+    if (url) relayLog('diag | findShareUrl()=' + url);
   }, 3000);
 
   // Watch the DOM for the share URL, and click "Create link" at most ONCE.
@@ -996,8 +1012,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
       var clBtn = findCreateLinkBtn();
       if (clBtn) {
         createLinkClicked = true;
-        console.log('[ESAR] CLICK_SHARE_ONLY: clicking "' +
-                    clBtn.textContent.trim().substring(0, 40) + '"');
+        relayLog('CLICK_SHARE_ONLY: clicking "' + clBtn.textContent.trim().substring(0, 40) + '"');
         clBtn.click();
       }
     }
@@ -1007,6 +1022,14 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   // 18 s hard deadline — respond with '' so the background tab gets closed.
   urlTimeout = setTimeout(function() { respond('', '18s-timeout'); }, 18000);
 
+  // Poll every 300 ms as a fallback for when MutationObserver is throttled.
+  // This ensures the URL is captured even if the user switches window focus
+  // between when we focus the background window and when the API call returns.
+  urlPollInterval = setInterval(function() {
+    var url = findShareUrl();
+    if (url) respond(url, 'url-poll');
+  }, 300);
+
   // Poll for the Share button (SPA renders asynchronously after page load).
   var btnInterval = setInterval(function() {
     btnAttempts++;
@@ -1014,8 +1037,8 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     if (btn) {
       clearInterval(btnInterval);
       btnClicked = true;
-      console.log('[ESAR] CLICK_SHARE_ONLY: Share btn found on attempt ' + btnAttempts +
-                  ' | label="' + (btn.getAttribute('aria-label') || btn.textContent.trim().substring(0, 30)) + '"');
+      relayLog('CLICK_SHARE_ONLY: Share btn found on attempt ' + btnAttempts +
+               ' | label="' + (btn.getAttribute('aria-label') || btn.textContent.trim().substring(0, 30)) + '"');
       btn.click();
       return;
     }
