@@ -149,7 +149,10 @@ function triggerShareAction(albumUrl) {
       resolve({ shareUrl: '' });
     }, 40000);
 
-    chrome.windows.create({ url: albumUrl, focused: false }, function(win) {
+    // Append #esar-auto so the content script knows at load time that this is
+    // an automation tab and suppresses ESAR UI / shows the banner immediately.
+    var autoUrl = albumUrl + (albumUrl.indexOf('#') === -1 ? '#esar-auto' : '');
+    chrome.windows.create({ url: autoUrl, focused: false }, function(win) {
       if (!win || !win.tabs || !win.tabs.length) {
         console.log('[ESAR] triggerShareAction: window create failed for', albumUrl);
         clearTimeout(globalTimeout); resolve({ shareUrl: '' }); return;

@@ -9,6 +9,11 @@
 
 const WEB_APP_URL = 'https://script.google.com/a/macros/kcesar.org/s/AKfycbwI_BNKfYjyw8v-WYrnpVmetL9pwIv85d0V7qFocSfo7cUosCAxxx9HynKNoWe1DB6Y/exec';
 
+// Automation tabs opened by triggerShareAction() have '#esar-auto' appended to
+// their URL by background.js. Detecting this at load time (synchronously, before
+// any timers fire) lets us suppress all ESAR UI and show the banner immediately.
+var IS_AUTO_TAB = location.hash === '#esar-auto';
+
 // ── SPA navigation watcher ────────────────────────────────────────────────────
 // Google Photos is a React SPA; URL changes don't trigger a page reload.
 
@@ -20,9 +25,15 @@ new MutationObserver(() => {
   }
 }).observe(document.documentElement, { subtree: true, childList: true });
 
-setTimeout(onNavigate, 600); // initial page load
+if (IS_AUTO_TAB) {
+  // Automation tab: show the banner immediately, skip all ESAR UI injection.
+  injectShareBanner();
+} else {
+  setTimeout(onNavigate, 600); // initial page load
+}
 
 function onNavigate() {
+  if (IS_AUTO_TAB) return; // automation tab — never inject ESAR UI
   removeById('esar-panel');
   removeById('esar-fab');
 
