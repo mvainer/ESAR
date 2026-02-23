@@ -1,5 +1,10 @@
 # ESAR Project — Claude Context
 
+## On Session Start
+**Always read these two files before doing any work:**
+1. `Requirements.md` — full system spec, architecture, accounts, deployment IDs
+2. `Issues.md` — known failure modes and fixes (consult before debugging anything)
+
 ## Standing Rules
 - **Every code change → git commit + push immediately after. No exceptions.**
 - **Every new deployment → `clasp undeploy` all old non-HEAD deployments. Leave no stale deployments.**
