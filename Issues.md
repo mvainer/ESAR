@@ -44,6 +44,27 @@ ANY change to `oauthScopes` — adding OR removing a scope — invalidates the w
 
 ---
 
+## Issue 2: "You do not have permission to call SpreadsheetApp.openById" — Stale Executor Token After Scope Change
+
+**Symptom**
+- Web app loads (execution log IS present), but returns: `"You do not have permission to call SpreadsheetApp.openById. Required permissions: https://www.googleapis.com/auth/spreadsheets"`
+- Running the function from the Apps Script editor works fine (no auth prompt, no error)
+
+**Root Cause**
+The web app executor token is cached with an old scope (e.g. `spreadsheets.readonly`). When the scope was updated in `appsscript.json` and a new deployment was created via UI, Google detected that the account already had partial authorization and skipped the consent prompt — leaving the executor token using the old scope.
+
+**Fix**
+1. As **photos@kcesar.org**, go to [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
+2. Find the affected project (e.g. "ESAR Gallery") → **Remove access**
+3. In Apps Script → **Deploy → New deployment → Web app** → Execute as: Me / Anyone within kcesar.org → Deploy
+4. The **"Authorize access"** dialog will now appear — complete it
+5. Update deployment ID in `Requirements.md` → `clasp undeploy` old deployments → git commit + push
+
+**Why running from the editor didn't help**
+Editor tokens and web app executor tokens are completely separate OAuth grants. Authorizing in the editor never affects the web app executor.
+
+---
+
 ## Diagnostic Checklist for "unable to open file"
 
 1. **No execution log?** → Deployment/authorization issue (not code). Go to step 2.
