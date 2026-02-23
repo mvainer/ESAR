@@ -464,39 +464,73 @@ function submitSelected() {
   });
   var total = albums.length;
 
-  function setBtn(text) {
-    var btn = document.getElementById('esar-add-btn');
-    if (!btn) return;
-    btn.disabled = true;
-    btn.textContent = text;
-    btn.style.background = '#aecbfa';
-    btn.style.cursor = 'default';
-  }
+  // Switch panel to non-blocking progress view — panel stays open and interactive.
+  showProgressView(albums);
 
-  // Step 1: Get share links sequentially — one album tab opens, Share is clicked
-  // automatically, the link is captured, and the tab closes before the next opens.
-  // Sequential ensures only one extra tab is open at a time and Chrome refocuses
-  // this page between each one.
-  setBtn('Getting share links\u2026 (0\u2009/\u2009' + total + ')');
+  // ── Phase 1: Trigger share for each album (sequential, background tabs) ──────
+  // Each album is opened in a hidden tab, Share → Create link is clicked, and
+  // the tab closes after 3 s. No waiting for the share URL.
+  var triggered = 0;
+  updateProgressNote('Phase 1 of 2: Triggering shares\u2026 (0\u2009/\u2009' + total + ')');
 
-  var albumsWithUrls = [];
-  albums.reduce(function(chain, album, i) {
+  albums.reduce(function(chain, album) {
     return chain.then(function() {
-      return getShareUrlForAlbum(album).then(function(shareUrl) {
-        albumsWithUrls.push({ title: album.title, url: shareUrl, thumbnail: album.thumbnail });
-        setBtn('Getting share links\u2026 (' + (i + 1) + '\u2009/\u2009' + total + ')');
+      setAlbumStatus(album.url, 'triggering');
+      return new Promise(function(resolve) {
+        try {
+          chrome.runtime.sendMessage({ type: 'TRIGGER_SHARE', albumUrl: album.url }, function() {
+            if (chrome.runtime.lastError) {/* ignore — tab may have closed before responding */}
+            setAlbumStatus(album.url, 'triggered');
+            triggered++;
+            updateProgressNote('Phase 1 of 2: Triggering shares\u2026 (' + triggered + '\u2009/\u2009' + total + ')');
+            resolve();
+          });
+        } catch(e) {
+          setAlbumStatus(album.url, 'triggered');
+          triggered++;
+          resolve();
+        }
       });
     });
   }, Promise.resolve()).then(function() {
 
-    // Step 2: Fetch thumbnails via background service worker (bypasses CORS).
+    // ── Phase 2: Collect share URLs from the Shared Albums page ───────────────
+    // Open photos.google.com/sharing once — the content script there scans
+    // script-tag data to match each album ID to its photos.app.goo.gl URL.
+    albums.forEach(function(album) { setAlbumStatus(album.url, 'collecting'); });
+    updateProgressNote('Phase 2 of 2: Collecting share links\u2026');
+
+    return new Promise(function(resolve) {
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'COLLECT_FROM_SHARING_PAGE', albums: albums },
+          function(response) {
+            if (chrome.runtime.lastError) { resolve({}); return; }
+            resolve((response && response.results) || {});
+          }
+        );
+      } catch(e) { resolve({}); }
+    });
+
+  }).then(function(shareResults) {
+
+    // Merge share URLs back into albums; fall back to original URL on miss.
+    var albumsWithUrls = albums.map(function(album) {
+      var albumId  = (album.url.match(/\/album\/([A-Za-z0-9_-]{15,})/) || [])[1] || '';
+      var shareUrl = (shareResults && albumId && shareResults[albumId]) || album.url;
+      var linked   = shareUrl.indexOf('photos.app.goo.gl') !== -1;
+      setAlbumStatus(album.url, linked ? 'linked' : 'failed');
+      return { title: album.title, url: shareUrl, thumbnail: album.thumbnail };
+    });
+
+    // ── Phase 3: Fetch thumbnails (parallel) ──────────────────────────────────
     var thumbsDone = 0;
-    setBtn('Preparing thumbnails\u2026 (0\u2009/\u2009' + total + ')');
+    updateProgressNote('Preparing thumbnails\u2026 (0\u2009/\u2009' + total + ')');
 
     return Promise.all(albumsWithUrls.map(function(album) {
       return fetchThumbnailDataUrl(album.thumbnail).then(function(dataUrl) {
         thumbsDone++;
-        setBtn('Preparing thumbnails\u2026 (' + thumbsDone + '\u2009/\u2009' + total + ')');
+        updateProgressNote('Preparing thumbnails\u2026 (' + thumbsDone + '\u2009/\u2009' + total + ')');
         return {
           title:     album.title,
           url:       album.url,
@@ -506,13 +540,87 @@ function submitSelected() {
       });
     }));
 
-  // (closing the reduce .then)
   }).then(function(result) {
     chrome.storage.local.set({ esar_pending_bulk: result }, function() {
       window.open(WEB_APP_URL, '_blank', 'noopener');
       removeById('esar-panel');
     });
   });
+}
+
+// ── Progress view UI ──────────────────────────────────────────────────────────
+
+// Replace the panel body with a per-album progress list. The panel stays visible
+// and non-blocking throughout all three phases.
+function showProgressView(albums) {
+  var panel = document.getElementById('esar-panel');
+  if (!panel) return;
+
+  // Remove everything after the header (first child = blue header bar).
+  while (panel.children.length > 1) {
+    panel.removeChild(panel.lastChild);
+  }
+
+  // Status bar
+  var statusBar = document.createElement('div');
+  statusBar.style.cssText = 'padding:10px 14px;background:#e8f0fe;font-size:13px;font-weight:500;color:#1a73e8;flex-shrink:0;border-bottom:1px solid #c5d4f6;';
+  statusBar.textContent = 'Adding ' + albums.length + ' album' + (albums.length === 1 ? '' : 's') + '\u2026';
+  panel.appendChild(statusBar);
+
+  // Per-album progress rows
+  var list = document.createElement('div');
+  list.id = 'esar-progress-list';
+  list.style.cssText = 'overflow-y:auto;flex:1;';
+  albums.forEach(function(album) {
+    var row = document.createElement('div');
+    row.dataset.albumUrl = album.url;
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #f1f3f4;';
+
+    var badge = document.createElement('span');
+    badge.className = 'esar-status-badge';
+    badge.textContent = '\u25CB'; // ○
+    badge.style.cssText = 'font-size:15px;flex-shrink:0;width:20px;text-align:center;color:#80868b;';
+
+    var titleEl = document.createElement('span');
+    titleEl.textContent = album.title;
+    titleEl.style.cssText = 'font-size:13px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;flex:1;';
+
+    row.appendChild(badge);
+    row.appendChild(titleEl);
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
+
+  // Note at bottom
+  var note = document.createElement('div');
+  note.id = 'esar-progress-note';
+  note.style.cssText = 'padding:10px 14px;font-size:12px;color:#80868b;border-top:1px solid #e8eaed;flex-shrink:0;';
+  note.textContent = 'Starting\u2026';
+  panel.appendChild(note);
+}
+
+// Update the status badge for a specific album (identified by its URL).
+// status: 'triggering' | 'triggered' | 'collecting' | 'linked' | 'failed'
+function setAlbumStatus(albumUrl, status) {
+  var list = document.getElementById('esar-progress-list');
+  if (!list) return;
+  var rows = list.querySelectorAll('[data-album-url]');
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].dataset.albumUrl !== albumUrl) continue;
+    var badge = rows[i].querySelector('.esar-status-badge');
+    if (!badge) return;
+    var icons  = { triggering: '\u23F3', triggered: '\u231B', collecting: '\u231B', linked: '\u2713', failed: '\u2717' };
+    var colors = { triggering: '#fbbc04', triggered: '#fbbc04', collecting: '#fbbc04', linked: '#137333', failed: '#ea4335' };
+    badge.textContent  = icons[status]  || '\u25CB';
+    badge.style.color  = colors[status] || '#80868b';
+    return;
+  }
+}
+
+// Update the note line at the bottom of the progress panel.
+function updateProgressNote(text) {
+  var note = document.getElementById('esar-progress-note');
+  if (note) note.textContent = text;
 }
 
 // For albums already using a photos.app.goo.gl share link, return it immediately.
@@ -839,3 +947,132 @@ function clickCreateLinkSilent() {
     }
   }
 }
+
+// ── CLICK_SHARE_ONLY handler ──────────────────────────────────────────────────
+// Invoked by background.js when an album tab is opened for Phase 1 (triggering).
+// Finds the Share button, clicks it, then clicks "Create link" if needed.
+// Responds immediately — does NOT wait for or return the share URL.
+chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+  if (msg.type !== 'CLICK_SHARE_ONLY') return false;
+
+  var responded = false;
+  function finish() {
+    if (responded) return;
+    responded = true;
+    sendResponse({ ok: true });
+  }
+
+  var btnAttempts = 0;
+  var btnInterval = setInterval(function() {
+    btnAttempts++;
+    var btn = findShareButtonEl();
+    if (btn) {
+      clearInterval(btnInterval);
+      btn.click();
+      // Give dialog time to open, then click "Create link" if needed.
+      setTimeout(function() {
+        clickCreateLinkSilent();
+        finish();
+      }, 1500);
+      return;
+    }
+    if (btnAttempts >= 20) { // 20 × 500 ms = 10 s
+      clearInterval(btnInterval);
+      finish();
+    }
+  }, 500);
+
+  return true;
+});
+
+// ── WATCH_SHARING_PAGE_CONTENT handler ───────────────────────────────────────
+// Runs on photos.google.com/sharing (the Shared Albums page).
+// Invoked by background.js after Phase 1 completes, with the list of albums
+// whose sharing was triggered. Scans script-tag SSR data for each album's ID
+// and the photos.app.goo.gl URL stored nearby. Uses a MutationObserver to catch
+// albums that are lazily added to the page. Responds with:
+//   { results: { albumId: 'https://photos.app.goo.gl/...', ... } }
+// for every album whose share URL was found.
+chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+  if (msg.type !== 'WATCH_SHARING_PAGE_CONTENT') return false;
+
+  var albums   = msg.albums || [];
+  var albumIds = albums.map(function(a) {
+    return (a.url.match(/\/album\/([A-Za-z0-9_-]{15,})/) || [])[1] || '';
+  });
+  var SHARE_RE = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/;
+
+  var results    = {};
+  var responded  = false;
+  var observer   = null;
+  var watchTimer = null;
+
+  function finish() {
+    if (responded) return;
+    responded = true;
+    if (observer)   { observer.disconnect(); observer = null; }
+    if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; }
+    sendResponse({ results: results });
+  }
+
+  function allFound() {
+    return albumIds.every(function(id) { return !id || results[id]; });
+  }
+
+  function scanScripts() {
+    var scripts = document.scripts;
+    for (var s = 0; s < scripts.length; s++) {
+      var src = scripts[s].textContent || '';
+      albumIds.forEach(function(id) {
+        if (!id || results[id]) return; // skip if empty or already found
+        var idx = src.indexOf(id);
+        if (idx === -1) return;
+        // Search 500 chars before + 2000 chars after the album ID position
+        var nearby = src.substring(Math.max(0, idx - 500), idx + 2000);
+        var m = nearby.match(SHARE_RE);
+        if (m) results[id] = m[0];
+      });
+    }
+  }
+
+  function scanDomAnchors() {
+    // Supplement script scan: look for visible share-link anchors and try to
+    // associate them with album IDs by finding the album ID in nearby DOM context.
+    var anchors = document.querySelectorAll('a[href*="photos.app.goo.gl"]');
+    for (var a = 0; a < anchors.length; a++) {
+      var m = (anchors[a].href || '').match(SHARE_RE);
+      if (!m) continue;
+      var shareUrl = m[0];
+      // Walk up to 5 ancestors and check their innerHTML for an album ID.
+      var el = anchors[a];
+      for (var depth = 0; depth < 5 && el; depth++) {
+        var html = el.innerHTML || '';
+        albumIds.forEach(function(id) {
+          if (!id || results[id]) return;
+          if (html.indexOf(id) !== -1) results[id] = shareUrl;
+        });
+        el = el.parentElement;
+      }
+    }
+  }
+
+  function scan() {
+    scanScripts();
+    scanDomAnchors();
+    if (allFound()) finish();
+  }
+
+  // Initial scan
+  scan();
+
+  if (!allFound()) {
+    // Watch for DOM / script changes (lazy-loaded album cards).
+    observer = new MutationObserver(function() { scan(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Respond with whatever we have after 45 s to avoid holding the channel open.
+    watchTimer = setTimeout(function() { finish(); }, 45000);
+  }
+
+  return true;
+});
