@@ -8,10 +8,14 @@
     "48":  "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "tabs"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": [
     "https://lh3.googleusercontent.com/*",
-    "https://*.usercontent.google.com/*"
+    "https://*.usercontent.google.com/*",
+    "https://lh3.google.com/*"
   ],
   "content_scripts": [
     {

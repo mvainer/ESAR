@@ -197,7 +197,7 @@ function makeModalLabel(text) {
   return lbl;
 }
 
-// Scan DOM for a photos.app.goo.gl share URL (appears inside the Share dialog).
+// Scan DOM (and embedded page data) for a photos.app.goo.gl share URL.
 function findShareUrl() {
   var SHARE_RE = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/;
 
@@ -220,6 +220,14 @@ function findShareUrl() {
   for (var i = 0; i < dialogs.length; i++) {
     var mt = (dialogs[i].textContent || '').match(SHARE_RE);
     if (mt) return mt[0];
+  }
+
+  // 4. Embedded page data (Google Photos encodes album state in <script> tags;
+  //    already-shared albums often have the share URL in the initial JS payload)
+  var scripts = document.scripts;
+  for (var s = 0; s < scripts.length; s++) {
+    var ms = (scripts[s].textContent || '').match(SHARE_RE);
+    if (ms) return ms[0];
   }
 
   return '';
@@ -436,34 +444,81 @@ function submitSelected() {
   );
   if (!checkboxes.length) return;
 
-  var addBtn = document.getElementById('esar-add-btn');
-  if (addBtn) {
-    addBtn.disabled         = true;
-    addBtn.textContent      = 'Preparing thumbnails\u2026';
-    addBtn.style.background = '#aecbfa';
-    addBtn.style.cursor     = 'default';
-  }
-
   var albums = checkboxes.map(function(cb) {
     return { title: cb.dataset.title, url: cb.dataset.url, thumbnail: cb.dataset.thumbnail };
   });
+  var total = albums.length;
 
-  // Fetch data URLs for all thumbnails in parallel (uses extension host_permissions
-  // to bypass CORS on lh3.googleusercontent.com with the user's Google auth cookies).
-  Promise.all(albums.map(function(album) {
-    return fetchThumbnailDataUrl(album.thumbnail).then(function(dataUrl) {
-      return {
-        title:     album.title,
-        url:       album.url,
-        thumbnail: album.thumbnail, // CDN URL — stored in =IMAGE() formula in Sheets
-        dataUrl:   dataUrl          // data URL — stored in col 6 for web app display
-      };
+  function setBtn(text) {
+    var btn = document.getElementById('esar-add-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = text;
+    btn.style.background = '#aecbfa';
+    btn.style.cursor = 'default';
+  }
+
+  // Step 1: Get share links sequentially — one album tab opens, Share is clicked
+  // automatically, the link is captured, and the tab closes before the next opens.
+  // Sequential ensures only one extra tab is open at a time and Chrome refocuses
+  // this page between each one.
+  setBtn('Getting share links\u2026 (0\u2009/\u2009' + total + ')');
+
+  var albumsWithUrls = [];
+  albums.reduce(function(chain, album, i) {
+    return chain.then(function() {
+      return getShareUrlForAlbum(album).then(function(shareUrl) {
+        albumsWithUrls.push({ title: album.title, url: shareUrl, thumbnail: album.thumbnail });
+        setBtn('Getting share links\u2026 (' + (i + 1) + '\u2009/\u2009' + total + ')');
+      });
     });
-  })).then(function(result) {
-    // Store in chrome.storage — URL hash is stripped by Google auth redirects.
+  }, Promise.resolve()).then(function() {
+
+    // Step 2: Fetch thumbnails via background service worker (bypasses CORS).
+    var thumbsDone = 0;
+    setBtn('Preparing thumbnails\u2026 (0\u2009/\u2009' + total + ')');
+
+    return Promise.all(albumsWithUrls.map(function(album) {
+      return fetchThumbnailDataUrl(album.thumbnail).then(function(dataUrl) {
+        thumbsDone++;
+        setBtn('Preparing thumbnails\u2026 (' + thumbsDone + '\u2009/\u2009' + total + ')');
+        return {
+          title:     album.title,
+          url:       album.url,
+          thumbnail: album.thumbnail, // CDN URL — stored in =IMAGE() formula in Sheets
+          dataUrl:   dataUrl          // data URL — stored in col 6 for web app display
+        };
+      });
+    }));
+
+  // (closing the reduce .then)
+  }).then(function(result) {
     chrome.storage.local.set({ esar_pending_bulk: result }, function() {
       window.open(WEB_APP_URL, '_blank', 'noopener');
+      removeById('esar-panel');
     });
+  });
+}
+
+// For albums already using a photos.app.goo.gl share link, return it immediately.
+// Otherwise, ask the background service worker to open the album in a hidden tab,
+// click Share, capture the share link, and close the tab automatically.
+function getShareUrlForAlbum(album) {
+  if (album.url && album.url.indexOf('photos.app.goo.gl') !== -1) {
+    return Promise.resolve(album.url);
+  }
+  return new Promise(function(resolve) {
+    var timeout = setTimeout(function() { resolve(album.url); }, 30000);
+    try {
+      chrome.runtime.sendMessage({ type: 'GET_SHARE_URL', albumUrl: album.url }, function(resp) {
+        clearTimeout(timeout);
+        if (chrome.runtime.lastError) { resolve(album.url); return; }
+        resolve((resp && resp.shareUrl) || album.url);
+      });
+    } catch(e) {
+      clearTimeout(timeout);
+      resolve(album.url);
+    }
   });
 }
 
@@ -523,29 +578,26 @@ function scrapeAlbums() {
 }
 
 // Fetch a thumbnail URL and return a base64 data URL.
-// Runs inside the extension content script on photos.google.com, which has the
-// user's Google auth cookies. host_permissions for *.usercontent.google.com
-// grants cross-origin fetch access and bypasses CORS for those domains.
-// Falls back to the original URL on any error (gallery will show emoji placeholder).
+// Delegates to the background service worker, which is NOT subject to CORS and
+// can make credentialed fetches to auth-gated Google CDN URLs freely.
+// Falls back to '' on any error or after 10 s timeout (gallery shows emoji placeholder).
 function fetchThumbnailDataUrl(url) {
   if (!url) return Promise.resolve('');
-  return fetch(url, { credentials: 'include' })
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      var mime = (r.headers.get('Content-Type') || 'image/jpeg').split(';')[0].trim();
-      return r.blob().then(function(blob) { return { blob: blob, mime: mime }; });
-    })
-    .then(function(o) { return o.blob.arrayBuffer().then(function(buf) { return { buf: buf, mime: o.mime }; }); })
-    .then(function(o) {
-      var bytes  = new Uint8Array(o.buf);
-      var binary = '';
-      var CHUNK  = 8192;
-      for (var i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
-      }
-      return 'data:' + o.mime + ';base64,' + btoa(binary);
-    })
-    .catch(function() { return url; }); // original URL as fallback
+
+  var timeout = new Promise(function(resolve) {
+    setTimeout(function() { resolve(''); }, 10000);
+  });
+
+  var request = new Promise(function(resolve) {
+    try {
+      chrome.runtime.sendMessage({ type: 'FETCH_THUMBNAIL', url: url }, function(response) {
+        if (chrome.runtime.lastError) { resolve(''); return; }
+        resolve((response && response.dataUrl) || '');
+      });
+    } catch(e) { resolve(''); }
+  });
+
+  return Promise.race([request, timeout]);
 }
 
 // Normalize a Google Photos thumbnail URL so it loads publicly without session auth.
@@ -650,4 +702,115 @@ function checkConfig() {
     return false;
   }
   return true;
+}
+
+// ── Background → content message handler ─────────────────────────────────────
+// Receives EXTRACT_SHARE_URL from the background service worker when this tab
+// was opened programmatically to capture a share link.
+// 1. Looks for an existing photos.app.goo.gl URL in the DOM.
+// 2. If not found, clicks the Share button to open the Share dialog.
+// 3. Watches for the URL to appear (including clicking "Create link" if needed).
+// 4. Responds with the URL, or '' on timeout.
+
+chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+  if (msg.type !== 'EXTRACT_SHARE_URL') return false;
+
+  var existing = findShareUrl();
+  if (existing) { sendResponse({ shareUrl: existing }); return true; }
+
+  var responded = false;
+
+  function finish(url) {
+    if (responded) return;
+    responded = true;
+    clearTimeout(urlWatchTimeout);
+    domObserver.disconnect();
+    sendResponse({ shareUrl: url || '' });
+  }
+
+  // Watch the DOM for a photos.app.goo.gl URL to appear after the dialog opens.
+  // Also keep trying to click "Create link" in case link sharing isn't enabled yet.
+  var domObserver = new MutationObserver(function() {
+    var url = findShareUrl();
+    if (url) { finish(url); return; }
+    clickCreateLinkSilent();
+  });
+  domObserver.observe(document.body, { childList: true, subtree: true });
+  var urlWatchTimeout = setTimeout(function() { finish(''); }, 18000);
+
+  // Poll for the Share button to appear (Google Photos SPA may not have rendered
+  // it yet when this message arrives). Try every 500 ms for up to 12 seconds.
+  var btnAttempts = 0;
+  var btnInterval = setInterval(function() {
+    btnAttempts++;
+    var btn = findShareButtonEl();
+    if (btn) {
+      clearInterval(btnInterval);
+      btn.click();
+      return;
+    }
+    if (btnAttempts >= 24) { // 24 × 500ms = 12 s
+      clearInterval(btnInterval);
+      finish('');
+    }
+  }, 500);
+
+  return true; // Keep the response channel open for async sendResponse
+});
+
+// Find the Share / Share album button element without clicking it.
+// Tries multiple attribute patterns because Google Photos changes its DOM over time.
+function findShareButtonEl() {
+  var SHARE_RE = /^share(\s+album)?$/i;
+
+  // 1. Quick attribute selectors — fastest path
+  var quickSelectors = [
+    '[aria-label="Share album"]', '[aria-label="Share"]',
+    '[data-tooltip="Share album"]', '[data-tooltip="Share"]',
+    '[title="Share album"]', '[title="Share"]',
+  ];
+  for (var q = 0; q < quickSelectors.length; q++) {
+    var el = document.querySelector(quickSelectors[q]);
+    if (el) return el;
+  }
+
+  // 2. Broad scan — covers role="button" divs, jsaction buttons, text-labeled buttons.
+  //    Google Photos uses [jsaction="...ShareAlbum..."] and similar patterns.
+  var candidates = document.querySelectorAll(
+    'button, [role="button"], a, [jsaction], [data-tooltip], [aria-label]'
+  );
+  for (var i = 0; i < candidates.length; i++) {
+    var c = candidates[i];
+
+    // Check label attributes with exact "share" / "share album" match
+    var label = (c.getAttribute('aria-label')      || '') ||
+                (c.getAttribute('data-tooltip')    || '') ||
+                (c.getAttribute('title')           || '') ||
+                (c.getAttribute('aria-description')|| '');
+    if (SHARE_RE.test(label.trim())) return c;
+
+    // Check jsaction — values look like "click:PhotosAlbumPage.shareAlbum"
+    var jsaction = (c.getAttribute('jsaction') || '').toLowerCase();
+    if (jsaction && /share/.test(jsaction) && !/unshare|reshare/.test(jsaction)) return c;
+
+    // Check visible text content (some Google Photos builds label toolbar buttons)
+    var text = (c.textContent || '').replace(/\s+/g, ' ').trim();
+    if (SHARE_RE.test(text)) return c;
+  }
+  return null;
+}
+
+// If the Share dialog is open but link sharing isn't enabled, click the
+// "Create link" / "Get link" / "Turn on link sharing" button.
+function clickCreateLinkSilent() {
+  var keywords = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
+  var els = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
+  for (var i = 0; i < els.length; i++) {
+    var text = (els[i].textContent || els[i].getAttribute('aria-label') || '').toLowerCase().trim();
+    for (var k = 0; k < keywords.length; k++) {
+      if (text === keywords[k] || text.indexOf(keywords[k]) === 0) {
+        els[i].click(); return;
+      }
+    }
+  }
 }

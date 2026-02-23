@@ -70,7 +70,7 @@ var SitesCreator = {
     header.setFontColor('#ffffff');
     header.setFontSize(11);
 
-    tab.setColumnWidth(1, 100);  // Thumbnail
+    tab.setColumnWidth(1, 220);  // Thumbnail
     tab.setColumnWidth(2, 240);  // Album title
     tab.setColumnWidth(3, 120);  // Date
     tab.setColumnWidth(4,  70);  // Photo count
@@ -96,7 +96,7 @@ var SitesCreator = {
     });
 
     var newRow = tab.getLastRow() + 1;
-    tab.setRowHeight(newRow, thumbnailUrl ? 90 : 40);
+    tab.setRowHeight(newRow, thumbnailUrl ? 160 : 40);
 
     if (thumbnailUrl) {
       tab.getRange(newRow, 1).setFormula('=IMAGE("' + thumbnailUrl + '",1)');
