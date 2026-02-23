@@ -446,11 +446,24 @@ function scrapeAlbums() {
     var title = getBestTitle(link);
     if (!title || title === 'Google Photos') return;
 
-    // Find thumbnail: prefer images in the link that look like photo URLs
+    // Find thumbnail: try <img> first, then CSS background-image (Google Photos
+    // renders album covers as background-image divs, not <img> tags).
     var img = link.querySelector('img[src*="googleusercontent"]') ||
               link.querySelector('img[src*="lh3.google"]') ||
               link.querySelector('img');
-    var thumbnail = img ? img.src : '';
+    var thumbnail = '';
+    if (img && img.src) {
+      thumbnail = img.src;
+    } else {
+      var bgEls = link.querySelectorAll('[style]');
+      for (var j = 0; j < bgEls.length; j++) {
+        var bgStyle = bgEls[j].style.backgroundImage;
+        if (bgStyle && (bgStyle.indexOf('googleusercontent') !== -1 || bgStyle.indexOf('lh3.google') !== -1)) {
+          var bgMatch = bgStyle.match(/url\(["']?([^"')]+)["']?\)/);
+          if (bgMatch) { thumbnail = bgMatch[1]; break; }
+        }
+      }
+    }
 
     albums.push({ title: title, url: href, thumbnail: thumbnail });
   });
