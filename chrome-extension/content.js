@@ -197,10 +197,11 @@ function makeModalLabel(text) {
   return lbl;
 }
 
-// Scan the Share dialog DOM for a photos.app.goo.gl share URL.
-// Only reads from interactive UI elements (inputs, dialogs, anchors) so we never
-// accidentally return a cached URL belonging to a different album from the page's
-// embedded JS payload.
+// Scan for a photos.app.goo.gl share URL belonging to the current album.
+// Priority order:
+//   1. Share dialog UI elements (inputs, dialogs, anchors) — most reliable when dialog is open
+//   2. Targeted script-tag search near THIS album's own ID — handles already-shared albums
+//      without accidentally returning URLs cached from other albums
 function findShareUrl() {
   var SHARE_RE = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/;
 
@@ -223,6 +224,25 @@ function findShareUrl() {
   if (anchors.length) {
     var m = String(anchors[0].href).match(SHARE_RE);
     if (m) return m[0];
+  }
+
+  // 4. Targeted page-data search: look for the share URL within 2 KB of THIS album's
+  //    own ID in the embedded script tags. Google Photos encodes the share URL in the
+  //    page's JS payload when the album already has link sharing enabled.
+  //    Searching near the album ID (not the full script) avoids picking up share URLs
+  //    that belong to other albums in the user's library.
+  var albumId = (location.pathname.match(/\/album\/([A-Za-z0-9_-]{15,})/) || [])[1];
+  if (albumId) {
+    var scripts = document.scripts;
+    for (var s = 0; s < scripts.length; s++) {
+      var src = scripts[s].textContent || '';
+      var idx = src.indexOf(albumId);
+      if (idx === -1) continue;
+      // Search 500 chars before + 2000 chars after the album ID
+      var nearby = src.substring(Math.max(0, idx - 500), idx + 2000);
+      var ms = nearby.match(SHARE_RE);
+      if (ms) return ms[0];
+    }
   }
 
   return '';
@@ -753,42 +773,52 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   return true; // Keep the response channel open for async sendResponse
 });
 
+// Recursively query selector across shadow DOM boundaries.
+function deepQuerySelectorAll(root, selector) {
+  var results = Array.prototype.slice.call(root.querySelectorAll(selector));
+  var all = root.querySelectorAll('*');
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].shadowRoot) {
+      results = results.concat(deepQuerySelectorAll(all[i].shadowRoot, selector));
+    }
+  }
+  return results;
+}
+
 // Find the Share / Share album button element without clicking it.
-// Tries multiple attribute patterns because Google Photos changes its DOM over time.
+// Uses shadow DOM traversal because Google Photos may render toolbar buttons inside
+// shadow roots that standard querySelectorAll cannot reach.
 function findShareButtonEl() {
   var SHARE_RE = /^share(\s+album)?$/i;
 
-  // 1. Quick attribute selectors — fastest path
+  // 1. Quick attribute selectors via shadow-piercing search
   var quickSelectors = [
     '[aria-label="Share album"]', '[aria-label="Share"]',
     '[data-tooltip="Share album"]', '[data-tooltip="Share"]',
     '[title="Share album"]', '[title="Share"]',
   ];
   for (var q = 0; q < quickSelectors.length; q++) {
-    var el = document.querySelector(quickSelectors[q]);
-    if (el) return el;
+    var found = deepQuerySelectorAll(document, quickSelectors[q]);
+    if (found.length) return found[0];
   }
 
-  // 2. Broad scan — covers role="button" divs, jsaction buttons, text-labeled buttons.
-  //    Google Photos uses [jsaction="...ShareAlbum..."] and similar patterns.
-  var candidates = document.querySelectorAll(
+  // 2. Broad scan across shadow DOM — covers jsaction buttons, text-labeled buttons.
+  var candidates = deepQuerySelectorAll(
+    document,
     'button, [role="button"], a, [jsaction], [data-tooltip], [aria-label]'
   );
   for (var i = 0; i < candidates.length; i++) {
     var c = candidates[i];
 
-    // Check label attributes with exact "share" / "share album" match
     var label = (c.getAttribute('aria-label')      || '') ||
                 (c.getAttribute('data-tooltip')    || '') ||
                 (c.getAttribute('title')           || '') ||
                 (c.getAttribute('aria-description')|| '');
     if (SHARE_RE.test(label.trim())) return c;
 
-    // Check jsaction — values look like "click:PhotosAlbumPage.shareAlbum"
     var jsaction = (c.getAttribute('jsaction') || '').toLowerCase();
     if (jsaction && /share/.test(jsaction) && !/unshare|reshare/.test(jsaction)) return c;
 
-    // Check visible text content (some Google Photos builds label toolbar buttons)
     var text = (c.textContent || '').replace(/\s+/g, ' ').trim();
     if (SHARE_RE.test(text)) return c;
   }
