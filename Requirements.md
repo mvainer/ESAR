@@ -113,9 +113,17 @@ web app (backend + member gallery).
 | 2 | Album title | plain text |
 | 3 | Date added | plain text |
 | 4 | (unused) | — |
-| 5 | Photos share URL | `=HYPERLINK("url","View Album")` formula |
+| 5 | Photos share URL | `=HYPERLINK("url","📷 View Album")` formula |
+| 6 | Web thumbnail | `data:image/jpeg;base64,…` data URL (stored by Chrome extension, used by gallery app) |
 
-`SitesCreator.listAlbums()` extracts URLs from these formulas via regex.
+`SitesCreator.listAlbums()` extracts URLs from col 5 formulas via regex; returns col 6 data URL as `thumbnail` field.
+
+## Chrome Extension Data Passing
+
+- Single album key: `esar_pending_album` → `{ title, url }`
+- Bulk albums key: `esar_pending_bulk` → `[{ title, url, thumbnail, dataUrl }, …]`
+  - `thumbnail`: CDN URL stored in col 1 `=IMAGE()` formula
+  - `dataUrl`: base64 JPEG data URL (≤300px, quality 0.82) stored in col 6 for gallery display
 
 ---
 
