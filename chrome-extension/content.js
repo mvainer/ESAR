@@ -501,24 +501,36 @@ function submitSelected() {
     });
   }, Promise.resolve()).then(function() {
 
-    // ── Phase 2: Fetch thumbnails in parallel ─────────────────────────────────
-    var thumbsDone = 0;
-    updateProgressNote('Preparing thumbnails\u2026 (0\u2009/\u2009' + total + ')');
+    // ── Phase 2: Fetch thumbnails for successfully-shared albums only ─────────
+    // Albums that failed to get a photos.app.goo.gl URL are excluded entirely —
+    // we must not create spreadsheet rows for them.
+    var successAlbums = albums.filter(function(a) {
+      return a.shareUrl && a.shareUrl.indexOf('photos.app.goo.gl') !== -1;
+    });
 
-    return Promise.all(albums.map(function(album) {
+    if (!successAlbums.length) {
+      updateProgressNote('No albums were shared successfully. No records created.');
+      return Promise.resolve(null);
+    }
+
+    var thumbsDone = 0;
+    updateProgressNote('Preparing thumbnails\u2026 (0\u2009/\u2009' + successAlbums.length + ')');
+
+    return Promise.all(successAlbums.map(function(album) {
       return fetchThumbnailDataUrl(album.thumbnail).then(function(dataUrl) {
         thumbsDone++;
-        updateProgressNote('Preparing thumbnails\u2026 (' + thumbsDone + '\u2009/\u2009' + total + ')');
+        updateProgressNote('Preparing thumbnails\u2026 (' + thumbsDone + '\u2009/\u2009' + successAlbums.length + ')');
         return {
           title:     album.title,
-          url:       album.shareUrl || album.url, // photos.app.goo.gl from Phase 1
-          thumbnail: album.thumbnail,             // CDN URL — stored in =IMAGE() formula
-          dataUrl:   dataUrl                      // data URL — stored in col 6 for gallery
+          url:       album.shareUrl,   // photos.app.goo.gl from Phase 1
+          thumbnail: album.thumbnail,  // CDN URL — stored in =IMAGE() formula
+          dataUrl:   dataUrl           // data URL — stored in col 6 for gallery
         };
       });
     }));
 
   }).then(function(result) {
+    if (!result) return; // all albums failed — nothing to send
     chrome.storage.local.set({ esar_pending_bulk: result }, function() {
       window.open(WEB_APP_URL, '_blank', 'noopener');
       removeById('esar-panel');
@@ -1045,12 +1057,41 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
       createLinkClicked = true;
       var cx = Math.round(rect.left + rect.width  / 2);
       var cy = Math.round(rect.top  + rect.height / 2);
-      relayLog('CREATE_LINK_BTN visible: dispatching mousedown+mouseup+click "' +
-               clBtn.textContent.trim().substring(0, 40) + '"' +
-               ' tag=' + clBtn.tagName +
-               ' rect={x:' + cx + ',y:' + cy + ',w:' + Math.round(rect.width) + ',h:' + Math.round(rect.height) + '}');
-      // Dispatch full mouse event sequence with real coordinates so that any
-      // event-delegation framework (e.g. Google's JsAction) registers the click.
+
+      // ── Diagnostic: log everything needed to understand the click target ──
+      // 1. Full outerHTML of the button we are about to click.
+      relayLog('STEP2_BTN outerHTML: ' + clBtn.outerHTML.substring(0, 800));
+
+      // 2. Full outerHTML of every visible dialog so we can see the dialog structure.
+      var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+      for (var di = 0; di < dialogs.length; di++) {
+        var dr = dialogs[di].getBoundingClientRect();
+        relayLog('STEP2_DIALOG[' + di + '] visible=' + (dr.width > 0) +
+                 ' outerHTML: ' + dialogs[di].outerHTML.substring(0, 2000));
+      }
+
+      // 3. All elements matching "create link" keywords — tag, text, rect, outerHTML.
+      var kwAll = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
+      var allEls = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
+      var matchIdx = 0;
+      for (var ai = 0; ai < allEls.length; ai++) {
+        var aText = (allEls[ai].textContent || allEls[ai].getAttribute('aria-label') || '').toLowerCase().trim();
+        for (var ak = 0; ak < kwAll.length; ak++) {
+          if (aText === kwAll[ak] || aText.indexOf(kwAll[ak]) === 0) {
+            var ar = allEls[ai].getBoundingClientRect();
+            relayLog('STEP2_ALL_MATCHES[' + matchIdx + '] tag=' + allEls[ai].tagName +
+                     ' text="' + allEls[ai].textContent.trim().substring(0, 30) + '"' +
+                     ' visible=' + (ar.width > 0 && ar.height > 0) +
+                     ' rect={w:' + Math.round(ar.width) + ',h:' + Math.round(ar.height) + '}' +
+                     ' outerHTML: ' + allEls[ai].outerHTML.substring(0, 400));
+            matchIdx++;
+            break;
+          }
+        }
+      }
+
+      relayLog('STEP2_CLICK dispatching mousedown+mouseup+click at cx=' + cx + ' cy=' + cy);
+      // Dispatch full mouse event sequence with real coordinates.
       ['mousedown', 'mouseup', 'click'].forEach(function(type) {
         clBtn.dispatchEvent(new MouseEvent(type, {
           bubbles: true, cancelable: true, view: window,
@@ -1058,17 +1099,17 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           buttons: 1, button: 0,
         }));
       });
-      // Show banner if URL still doesn't appear within 500 ms.
+
+      // 200 ms after click: log DOM state to see if anything changed.
       setTimeout(function() {
-        if (responded || findShareUrl()) return;
-        relayLog('CLICK_SHARE_ONLY: visible click had no effect — showing user banner');
-        injectShareBanner();
-      }, 500);
+        var urlAfter = findShareUrl();
+        relayLog('STEP2_POST200ms shareUrl=' + (urlAfter || '(none)') +
+                 ' dialogs=' + document.querySelectorAll('[role="dialog"],[aria-modal="true"]').length);
+      }, 200);
     } else if (!hiddenCreateLinkClicked) {
       // Step 1: hidden navigation element in dialog[0] — click once to open dialog[1].
       hiddenCreateLinkClicked = true;
-      relayLog('CREATE_LINK_BTN hidden: clicking navigation element (opens dialog[1])' +
-               ' outerHTML: ' + clBtn.outerHTML.substring(0, 200));
+      relayLog('STEP1_BTN outerHTML: ' + clBtn.outerHTML.substring(0, 400));
       clBtn.click();
     }
     // If hiddenCreateLinkClicked && !isVisible: already navigated, waiting for dialog[1].
