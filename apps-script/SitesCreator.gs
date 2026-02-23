@@ -90,7 +90,13 @@ var SitesCreator = {
    * @param {string} thumbnailUrl Optional cover photo URL (right-click cover → Copy image address)
    * @returns {string} The photosUrl that was saved
    */
-  addAlbumDirect: function(title, photosUrl, thumbnailUrl) {
+  /**
+   * @param {string} title
+   * @param {string} photosUrl   Share link for members (photos.app.goo.gl/…)
+   * @param {string} thumbnailUrl  CDN URL stored in =IMAGE() formula (col 1) for Sheets display
+   * @param {string} [webThumbnail]  data URL stored in col 6 for web app display
+   */
+  addAlbumDirect: function(title, photosUrl, thumbnailUrl, webThumbnail) {
     var tab = SitesCreator.getOrCreateTab();
 
     var dateStr = new Date().toLocaleDateString('en-US', {
@@ -115,8 +121,13 @@ var SitesCreator = {
         .setVerticalAlignment('middle');
     }
 
+    // Col 6: data URL for web app display (avoids cross-origin auth issues with CDN URLs)
+    if (webThumbnail) {
+      tab.getRange(newRow, 6).setValue(webThumbnail);
+    }
+
     if (newRow % 2 === 0) {
-      tab.getRange(newRow, 1, 1, 5).setBackground('#f8f9fa');
+      tab.getRange(newRow, 1, 1, 6).setBackground('#f8f9fa');
     }
 
     return photosUrl;
@@ -133,9 +144,8 @@ var SitesCreator = {
     var lastRow = tab.getLastRow();
     if (lastRow <= 1) return [];
 
-    var values        = tab.getRange(2, 1, lastRow - 1, 5).getValues();
-    var thumbFormulas = tab.getRange(2, 1, lastRow - 1, 1).getFormulas();
-    var linkFormulas  = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
+    var values       = tab.getRange(2, 1, lastRow - 1, 6).getValues();  // cols 1–6
+    var linkFormulas = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
 
     var albums = [];
     for (var i = 0; i < values.length; i++) {
@@ -147,19 +157,18 @@ var SitesCreator = {
       var urlMatch    = linkFormula.match(/=HYPERLINK\("([^"]+)"/);
       var photosUrl   = urlMatch ? urlMatch[1] : String(values[i][4] || '');
 
-      // Extract thumbnail URL from =IMAGE("url",1) formula in col 1
-      var thumbFormula = thumbFormulas[i][0];
-      var thumbMatch   = thumbFormula.match(/=IMAGE\("([^"]+)"/);
-      var thumbnail    = thumbMatch ? thumbMatch[1] : '';
+      // Col 6 (index 5): data URL stored by the Chrome extension — no cross-origin auth needed.
+      // Falls back to empty string (gallery/admin show emoji placeholder for older albums).
+      var thumbnail = String(values[i][5] || '');
 
       albums.push({
         row:       i + 2,
         title:     String(title),
         dateAdded: (function(v) {
-        if (!v) return '';
-        if (v instanceof Date) return v.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-        return String(v);
-      })(values[i][2]),
+          if (!v) return '';
+          if (v instanceof Date) return v.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+          return String(v);
+        })(values[i][2]),
         photosUrl: photosUrl,
         thumbnail: thumbnail
       });

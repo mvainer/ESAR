@@ -436,13 +436,34 @@ function submitSelected() {
   );
   if (!checkboxes.length) return;
 
-  var selected = checkboxes.map(function(cb) {
+  var addBtn = document.getElementById('esar-add-btn');
+  if (addBtn) {
+    addBtn.disabled         = true;
+    addBtn.textContent      = 'Preparing thumbnails\u2026';
+    addBtn.style.background = '#aecbfa';
+    addBtn.style.cursor     = 'default';
+  }
+
+  var albums = checkboxes.map(function(cb) {
     return { title: cb.dataset.title, url: cb.dataset.url, thumbnail: cb.dataset.thumbnail };
   });
 
-  // Store in chrome.storage — URL hash is stripped by Google auth redirects.
-  chrome.storage.local.set({ esar_pending_bulk: selected }, function() {
-    window.open(WEB_APP_URL, '_blank', 'noopener');
+  // Fetch data URLs for all thumbnails in parallel (uses extension host_permissions
+  // to bypass CORS on lh3.googleusercontent.com with the user's Google auth cookies).
+  Promise.all(albums.map(function(album) {
+    return fetchThumbnailDataUrl(album.thumbnail).then(function(dataUrl) {
+      return {
+        title:     album.title,
+        url:       album.url,
+        thumbnail: album.thumbnail, // CDN URL — stored in =IMAGE() formula in Sheets
+        dataUrl:   dataUrl          // data URL — stored in col 6 for web app display
+      };
+    });
+  })).then(function(result) {
+    // Store in chrome.storage — URL hash is stripped by Google auth redirects.
+    chrome.storage.local.set({ esar_pending_bulk: result }, function() {
+      window.open(WEB_APP_URL, '_blank', 'noopener');
+    });
   });
 }
 
@@ -499,6 +520,32 @@ function scrapeAlbums() {
   });
 
   return albums;
+}
+
+// Fetch a thumbnail URL and return a base64 data URL.
+// Runs inside the extension content script on photos.google.com, which has the
+// user's Google auth cookies. host_permissions for *.usercontent.google.com
+// grants cross-origin fetch access and bypasses CORS for those domains.
+// Falls back to the original URL on any error (gallery will show emoji placeholder).
+function fetchThumbnailDataUrl(url) {
+  if (!url) return Promise.resolve('');
+  return fetch(url, { credentials: 'include' })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var mime = (r.headers.get('Content-Type') || 'image/jpeg').split(';')[0].trim();
+      return r.blob().then(function(blob) { return { blob: blob, mime: mime }; });
+    })
+    .then(function(o) { return o.blob.arrayBuffer().then(function(buf) { return { buf: buf, mime: o.mime }; }); })
+    .then(function(o) {
+      var bytes  = new Uint8Array(o.buf);
+      var binary = '';
+      var CHUNK  = 8192;
+      for (var i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+      }
+      return 'data:' + o.mime + ';base64,' + btoa(binary);
+    })
+    .catch(function() { return url; }); // original URL as fallback
 }
 
 // Normalize a Google Photos thumbnail URL so it loads publicly without session auth.

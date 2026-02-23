@@ -9,6 +9,10 @@
     "128": "icons/icon128.png"
   },
   "permissions": ["storage"],
+  "host_permissions": [
+    "https://lh3.googleusercontent.com/*",
+    "https://*.usercontent.google.com/*"
+  ],
   "content_scripts": [
     {
       "matches": ["https://photos.google.com/*"],

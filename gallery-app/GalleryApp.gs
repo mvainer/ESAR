@@ -20,9 +20,8 @@ function serverGetAlbums() {
     var lastRow = tab.getLastRow();
     if (lastRow <= 1) return { success: true, albums: [] };
 
-    var values        = tab.getRange(2, 1, lastRow - 1, 5).getValues();
-    var thumbFormulas = tab.getRange(2, 1, lastRow - 1, 1).getFormulas();
-    var linkFormulas  = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
+    var values       = tab.getRange(2, 1, lastRow - 1, 6).getValues();  // cols 1–6
+    var linkFormulas = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
 
     var albums = [];
     for (var i = 0; i < values.length; i++) {
@@ -33,9 +32,8 @@ function serverGetAlbums() {
       var urlMatch    = linkFormula.match(/=HYPERLINK\("([^"]+)"/);
       var photosUrl   = urlMatch ? urlMatch[1] : String(values[i][4] || '');
 
-      var thumbFormula = thumbFormulas[i][0];
-      var thumbMatch   = thumbFormula.match(/=IMAGE\("([^"]+)"/);
-      var thumbnail    = thumbMatch ? thumbMatch[1] : '';
+      // Col 6 (index 5): data URL stored by the Chrome extension — no cross-origin auth needed.
+      var thumbnail = String(values[i][5] || '');
 
       var dateVal   = values[i][2];
       var dateAdded = '';

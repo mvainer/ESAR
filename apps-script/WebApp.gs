@@ -79,7 +79,8 @@ function serverAddAlbumsBulk(albumsJson) {
   albums.forEach(function(album) {
     var title     = (album.title     || '').trim();
     var url       = (album.url       || '').trim();
-    var thumbnail = (album.thumbnail || '').trim();
+    var thumbnail = (album.thumbnail || '').trim(); // CDN URL → =IMAGE() formula in Sheets col 1
+    var dataUrl   = (album.dataUrl   || '').trim(); // data URL → col 6 for web app display
 
     if (!title || !url) {
       results.push({ title: title || url || '(unknown)', status: 'error', error: 'Missing title or URL.' });
@@ -92,7 +93,7 @@ function serverAddAlbumsBulk(albumsJson) {
     }
 
     try {
-      SitesCreator.addAlbumDirect(title, url, thumbnail);
+      SitesCreator.addAlbumDirect(title, url, thumbnail, dataUrl);
       existingUrls[url] = true;  // update local cache so duplicates within the batch are caught
       results.push({ title: title, status: 'added' });
     } catch (err) {
