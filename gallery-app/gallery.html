@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base target="_top">
+  <title>ESAR Photo Albums</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Google Sans', Roboto, Arial, sans-serif; background: #f0f2f5; color: #202124; }
+
+    .header {
+      background: #1a73e8;
+      color: #fff;
+      padding: 20px 28px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    .header h1 { font-size: 22px; font-weight: 500; letter-spacing: -.2px; }
+    .header p  { font-size: 13px; opacity: .85; margin-top: 4px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+      padding: 28px;
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,.10);
+      transition: box-shadow .2s, transform .2s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+    }
+    .card:hover {
+      box-shadow: 0 6px 20px rgba(0,0,0,.18);
+      transform: translateY(-3px);
+    }
+    .card-thumb {
+      width: 100%;
+      height: 200px;
+      object-fit: cover;
+      display: block;
+      background: #e8eaed;
+    }
+    .card-thumb-placeholder {
+      width: 100%;
+      height: 200px;
+      background: linear-gradient(135deg, #c5cae9 0%, #9fa8da 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 56px;
+    }
+    .card-body { padding: 16px 18px 18px; flex: 1; display: flex; flex-direction: column; }
+    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 5px; line-height: 1.4; }
+    .card-date  { font-size: 12px; color: #5f6368; margin-bottom: 14px; flex: 1; }
+    .card-cta   {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 13px; font-weight: 500; color: #1a73e8;
+      background: #e8f0fe; border-radius: 20px;
+      padding: 7px 16px; align-self: flex-start;
+      transition: background .15s;
+    }
+    .card:hover .card-cta { background: #d2e3fc; }
+
+    .center { text-align: center; padding: 72px 20px; color: #80868b; grid-column: 1 / -1; }
+    .spinner {
+      display: inline-block; width: 36px; height: 36px;
+      border: 3px solid #e8eaed; border-top-color: #1a73e8;
+      border-radius: 50%; animation: spin .8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .center-icon { font-size: 56px; margin-bottom: 12px; }
+    .center p { font-size: 15px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>&#128247;  ESAR Photo Albums</h1>
+  <p>Click any album to view photos</p>
+</div>
+
+<div id="grid" class="grid">
+  <div class="center">
+    <div class="spinner"></div>
+    <p>Loading albums&hellip;</p>
+  </div>
+</div>
+
+<script>
+  google.script.run
+    .withSuccessHandler(function(result) {
+      var grid = document.getElementById('grid');
+      if (!result.success) {
+        grid.innerHTML = '<div class="center"><p>Could not load albums: ' + esc(result.error) + '</p></div>';
+        return;
+      }
+      if (!result.albums.length) {
+        grid.innerHTML = '<div class="center"><div class="center-icon">&#128193;</div><p>No albums yet.</p></div>';
+        return;
+      }
+
+      grid.innerHTML = result.albums.map(function(a) {
+        var thumb = a.thumbnail
+          ? '<img class="card-thumb" src="' + esc(a.thumbnail) + '" alt="' + esc(a.title) + '" loading="lazy">'
+          : '<div class="card-thumb-placeholder">&#128247;</div>';
+        var href = a.photosUrl ? esc(a.photosUrl) : '#';
+        return (
+          '<a class="card" href="' + href + '" target="_blank" rel="noopener noreferrer">' +
+            thumb +
+            '<div class="card-body">' +
+              '<div class="card-title">' + esc(a.title) + '</div>' +
+              '<div class="card-date">' + esc(a.dateAdded) + '</div>' +
+              '<span class="card-cta">&#128247;&thinsp; View Album</span>' +
+            '</div>' +
+          '</a>'
+        );
+      }).join('');
+    })
+    .withFailureHandler(function(e) {
+      document.getElementById('grid').innerHTML =
+        '<div class="center"><p>Could not load albums: ' + esc(e.message) + '</p></div>';
+    })
+    .serverGetAlbums();
+
+  function esc(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(String(s || '')));
+    return d.innerHTML;
+  }
+</script>
+</body>
+</html>

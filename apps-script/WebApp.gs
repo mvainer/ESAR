@@ -8,26 +8,13 @@
 //   5. Click Deploy → copy the web app URL
 //
 // Paste that URL into chrome-extension/content.js as WEB_APP_URL.
+//
+// The member-facing gallery is a SEPARATE Apps Script project (gallery-app/).
+// Do NOT add gallery routing here — it would tie the gallery URL to this deployment.
 
 // ── Web App Entry Point ───────────────────────────────────────────────────────
 
-function doGet(e) {
-  var params = (e && e.parameter) ? e.parameter : {};
-
-  // JSON API endpoint: ?action=list  (used by potential future extension checks)
-  if (params.action === 'list') {
-    try {
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: true, albums: SitesCreator.listAlbums() }))
-        .setMimeType(ContentService.MimeType.JSON);
-    } catch (err) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: false, error: err.message }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-  }
-
-  // HTML web app — pre-fill is handled client-side via URL hash (#single= / #bulk=)
+function doGet() {
   return HtmlService.createHtmlOutputFromFile('webapp')
     .setTitle('ESAR Photos — Album Directory')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
@@ -132,3 +119,4 @@ function serverRemoveAlbum(row) {
     return { success: false, error: err.message };
   }
 }
+

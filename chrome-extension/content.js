@@ -7,7 +7,7 @@
 // SETUP: Replace the placeholder below with your deployed Apps Script web app URL.
 // (Apps Script editor → Deploy → Manage deployments → copy the Web App URL)
 
-const WEB_APP_URL = 'https://script.google.com/a/macros/kcesar.org/s/AKfycbx-N_1mFodZifFFypMSYhFzt7rv-qgeVj6FFaAfm3QHKseQhu2A7Yhcr8NvoTI1RPDY/exec';
+const WEB_APP_URL = 'https://script.google.com/a/macros/kcesar.org/s/AKfycbzf2j2xVEiBFcEuQ3k7VDGNgBTuRUSrO27inCanaqr3nfAGO8_RbUUtWLdbCy73-EU/exec';
 
 // ── SPA navigation watcher ────────────────────────────────────────────────────
 // Google Photos is a React SPA; URL changes don't trigger a page reload.
@@ -51,14 +51,175 @@ function injectSingleFab() {
   fab.id = 'esar-fab';
   fab.onclick = function() {
     if (!checkConfig()) return;
-    var data = { title: pageTitle(), url: location.href };
-    // Store in chrome.storage so relay.js can forward it to the web app page.
-    // This survives Google auth redirects that strip URL hash fragments.
-    chrome.storage.local.set({ esar_pending_album: data }, function() {
+    showShareModal();
+  };
+  document.body.appendChild(fab);
+}
+
+// ── Share-link capture modal ───────────────────────────────────────────────────
+// Shows a confirmation card above the FAB with album title and share link fields.
+// A MutationObserver auto-fills the share link when the admin opens the Google
+// Photos Share dialog (the link appears in an input in the DOM).
+
+var _shareObserver = null;
+
+function showShareModal() {
+  removeById('esar-modal');
+
+  var initialShare = findShareUrl();
+  var title        = pageTitle();
+
+  var modal = document.createElement('div');
+  modal.id = 'esar-modal';
+  modal.style.cssText = [
+    'position:fixed', 'bottom:88px', 'right:28px', 'z-index:2147483647',
+    'background:#fff', 'border-radius:12px', 'overflow:hidden', 'width:340px',
+    'box-shadow:0 4px 24px rgba(0,0,0,.25)',
+    'font-family:Google Sans,Roboto,Arial,sans-serif', 'font-size:14px', 'color:#202124',
+  ].join(';');
+
+  // Header
+  var hdr = document.createElement('div');
+  hdr.style.cssText = 'background:#1a73e8;color:#fff;padding:13px 16px;display:flex;align-items:center;justify-content:space-between;';
+
+  var hdrTitle = document.createElement('span');
+  hdrTitle.textContent = '\uD83D\uDCF7  Add to ESAR Website';
+  hdrTitle.style.cssText = 'font-size:15px;font-weight:500;';
+  hdr.appendChild(hdrTitle);
+
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '\u00D7';
+  closeBtn.title = 'Close';
+  closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0 0 0 10px;';
+  closeBtn.onclick = function() {
+    modal.remove();
+    if (_shareObserver) { _shareObserver.disconnect(); _shareObserver = null; }
+  };
+  hdr.appendChild(closeBtn);
+  modal.appendChild(hdr);
+
+  // Body
+  var body = document.createElement('div');
+  body.style.cssText = 'padding:16px;';
+
+  // -- Title field --
+  body.appendChild(makeModalLabel('Album Title'));
+  var titleInput = document.createElement('input');
+  titleInput.type  = 'text';
+  titleInput.value = title;
+  titleInput.style.cssText = 'width:100%;border:1px solid #dadce0;border-radius:4px;padding:8px 10px;font-size:14px;box-sizing:border-box;outline:none;margin-bottom:14px;';
+  titleInput.addEventListener('focus', function() { this.style.borderColor = '#1a73e8'; });
+  titleInput.addEventListener('blur',  function() { this.style.borderColor = '#dadce0'; });
+  body.appendChild(titleInput);
+
+  // -- Share link field --
+  body.appendChild(makeModalLabel('Member Share Link'));
+  var shareInput = document.createElement('input');
+  shareInput.type        = 'url';
+  shareInput.value       = initialShare;
+  shareInput.placeholder = 'photos.app.goo.gl/\u2026';
+  shareInput.style.cssText = 'width:100%;border:1px solid #dadce0;border-radius:4px;padding:8px 10px;font-size:14px;box-sizing:border-box;outline:none;margin-bottom:6px;';
+  shareInput.addEventListener('focus', function() { this.style.borderColor = '#1a73e8'; });
+  shareInput.addEventListener('blur',  function() { this.style.borderColor = '#dadce0'; });
+  body.appendChild(shareInput);
+
+  var hint = document.createElement('div');
+  hint.style.cssText = 'font-size:12px;margin-bottom:16px;line-height:1.5;';
+  if (initialShare) {
+    hint.textContent   = '\u2713 Share link detected!';
+    hint.style.color   = '#137333';
+  } else {
+    hint.innerHTML     = '\uD83D\uDCA1 Click <strong>Share \u2192 Create&nbsp;link</strong> in Google Photos \u2014 the link auto-fills here.';
+    hint.style.color   = '#80868b';
+  }
+  body.appendChild(hint);
+
+  // -- Send button --
+  var sendBtn = document.createElement('button');
+  sendBtn.textContent = 'Send to ESAR Website';
+  sendBtn.style.cssText = [
+    'width:100%', 'background:#1a73e8', 'color:#fff', 'border:none',
+    'border-radius:6px', 'padding:11px', 'font-size:14px', 'font-weight:500',
+    'cursor:pointer', 'font-family:Google Sans,Roboto,Arial,sans-serif',
+  ].join(';');
+  sendBtn.addEventListener('mouseenter', function() { this.style.background = '#1558b0'; });
+  sendBtn.addEventListener('mouseleave', function() { this.style.background = '#1a73e8'; });
+  sendBtn.onclick = function() {
+    var t = titleInput.value.trim();
+    var u = shareInput.value.trim() || location.href;
+    if (!t) {
+      titleInput.style.borderColor = '#ea4335';
+      titleInput.focus();
+      return;
+    }
+    modal.remove();
+    if (_shareObserver) { _shareObserver.disconnect(); _shareObserver = null; }
+    chrome.storage.local.set({ esar_pending_album: { title: t, url: u } }, function() {
       window.open(WEB_APP_URL, '_blank', 'noopener');
     });
   };
-  document.body.appendChild(fab);
+  body.appendChild(sendBtn);
+
+  modal.appendChild(body);
+  document.body.appendChild(modal);
+
+  if (!initialShare) startShareUrlWatch(shareInput, hint);
+}
+
+function makeModalLabel(text) {
+  var lbl = document.createElement('div');
+  lbl.textContent = text;
+  lbl.style.cssText = 'font-size:11px;font-weight:600;color:#5f6368;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;';
+  return lbl;
+}
+
+// Scan DOM for a photos.app.goo.gl share URL (appears inside the Share dialog).
+function findShareUrl() {
+  var SHARE_RE = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/;
+
+  // 1. Anchor hrefs
+  var anchors = document.querySelectorAll('a[href*="photos.app.goo.gl"]');
+  if (anchors.length) {
+    var m = String(anchors[0].href).match(SHARE_RE);
+    if (m) return m[0];
+  }
+
+  // 2. Input / textarea values (Share dialog puts the link in a copy-field)
+  var inputs = document.querySelectorAll('input, textarea');
+  for (var i = 0; i < inputs.length; i++) {
+    var mv = (inputs[i].value || '').match(SHARE_RE);
+    if (mv) return mv[0];
+  }
+
+  // 3. Open dialog text content
+  var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+  for (var i = 0; i < dialogs.length; i++) {
+    var mt = (dialogs[i].textContent || '').match(SHARE_RE);
+    if (mt) return mt[0];
+  }
+
+  return '';
+}
+
+// Watch for DOM changes (Share dialog opening) to auto-fill the share link.
+function startShareUrlWatch(shareInput, hint) {
+  if (_shareObserver) _shareObserver.disconnect();
+  _shareObserver = new MutationObserver(function() {
+    if (shareInput.value && shareInput.value.indexOf('photos.app.goo.gl') !== -1) {
+      _shareObserver.disconnect();
+      _shareObserver = null;
+      return;
+    }
+    var url = findShareUrl();
+    if (url) {
+      shareInput.value  = url;
+      hint.textContent  = '\u2713 Share link detected!';
+      hint.style.color  = '#137333';
+      _shareObserver.disconnect();
+      _shareObserver = null;
+    }
+  });
+  _shareObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 // ── Bulk FAB (albums list page) ───────────────────────────────────────────────
@@ -315,8 +476,12 @@ function getBestTitle(link) {
   var img = link.querySelector('img');
   if (img && img.alt && img.alt !== 'Google Photos') return img.alt.trim();
 
-  // 4. visible text content (last resort)
-  var text = link.textContent.trim();
+  // 4. visible text content (last resort) — strip item count and menu noise
+  var text = link.textContent
+    .replace(/\d+\s*items?/gi, '')
+    .replace(/More options/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (text && text !== 'Google Photos') return text;
 
   return '';

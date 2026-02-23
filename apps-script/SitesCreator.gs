@@ -108,24 +108,35 @@ var SitesCreator = {
     var lastRow = tab.getLastRow();
     if (lastRow <= 1) return [];
 
-    var values   = tab.getRange(2, 1, lastRow - 1, 5).getValues();
-    var formulas = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
+    var values        = tab.getRange(2, 1, lastRow - 1, 5).getValues();
+    var thumbFormulas = tab.getRange(2, 1, lastRow - 1, 1).getFormulas();
+    var linkFormulas  = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
 
     var albums = [];
     for (var i = 0; i < values.length; i++) {
       var title = values[i][1];
       if (!title) continue;  // skip blank rows
 
-      // Extract URL from =HYPERLINK("url","label") formula
-      var formula  = formulas[i][0];
-      var urlMatch = formula.match(/=HYPERLINK\("([^"]+)"/);
-      var photosUrl = urlMatch ? urlMatch[1] : String(values[i][4] || '');
+      // Extract Photos URL from =HYPERLINK("url","label") formula in col 5
+      var linkFormula = linkFormulas[i][0];
+      var urlMatch    = linkFormula.match(/=HYPERLINK\("([^"]+)"/);
+      var photosUrl   = urlMatch ? urlMatch[1] : String(values[i][4] || '');
+
+      // Extract thumbnail URL from =IMAGE("url",1) formula in col 1
+      var thumbFormula = thumbFormulas[i][0];
+      var thumbMatch   = thumbFormula.match(/=IMAGE\("([^"]+)"/);
+      var thumbnail    = thumbMatch ? thumbMatch[1] : '';
 
       albums.push({
         row:       i + 2,
         title:     String(title),
-        dateAdded: String(values[i][2] || ''),
-        photosUrl: photosUrl
+        dateAdded: (function(v) {
+        if (!v) return '';
+        if (v instanceof Date) return v.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        return String(v);
+      })(values[i][2]),
+        photosUrl: photosUrl,
+        thumbnail: thumbnail
       });
     }
 
