@@ -307,9 +307,12 @@
       return;
     }
     var rows = albums.map(function(a) {
-      var thumb = a.thumbnail
-        ? '<img src="' + esc(a.thumbnail) + '" style="width:56px;height:56px;object-fit:cover;border-radius:4px;display:block;" onerror="this.style.display=\'none\'">'
-        : '<div style="width:56px;height:56px;background:#f1f3f4;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:22px;">\uD83D\uDCC1</div>';
+      // Thumbnail URLs from Google Photos require auth and may not load cross-origin.
+      // Emoji shows by default; img is layered on top and removed on error.
+      var thumbBase = 'width:56px;height:56px;border-radius:4px;background:#f1f3f4;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;';
+      var thumb = '<div style="' + thumbBase + '">\uD83D\uDCC1' +
+        (a.thumbnail ? '<img src="' + esc(a.thumbnail) + '" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">' : '') +
+        '</div>';
       var link = a.photosUrl
         ? '<a class="album-link" href="' + esc(a.photosUrl) + '" target="_blank">\uD83D\uDCF7 View Album</a>'
         : '\u2014';

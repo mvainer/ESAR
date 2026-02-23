@@ -111,9 +111,11 @@
       }
 
       grid.innerHTML = result.albums.map(function(a) {
-        var thumb = a.thumbnail
-          ? '<img class="card-thumb" src="' + esc(a.thumbnail) + '" alt="' + esc(a.title) + '" loading="lazy">'
-          : '<div class="card-thumb-placeholder">&#128247;</div>';
+        // Thumbnail URLs from Google Photos may require auth to load cross-origin.
+        // Camera emoji shows by default; img is layered on top and removed on error.
+        var thumb = '<div class="card-thumb-placeholder" style="position:relative;">&#128247;' +
+          (a.thumbnail ? '<img src="' + esc(a.thumbnail) + '" alt="' + esc(a.title) + '" loading="lazy" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;" onerror="this.remove()">' : '') +
+          '</div>';
         var href = a.photosUrl ? esc(a.photosUrl) : '#';
         return (
           '<a class="card" href="' + href + '" target="_blank" rel="noopener noreferrer">' +
