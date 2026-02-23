@@ -130,9 +130,15 @@ function getShareUrl(albumUrl) {
   });
 }
 
-// Opens the album in a background tab (active: false), clicks Share → Create link
-// to initiate link sharing on Google Photos' servers, waits 3 s for the share to
-// register, then closes the tab. Does NOT wait for or return the share URL.
+// Opens the album in a new unfocused window, clicks Share → Create link to initiate
+// link sharing on Google Photos' servers, waits 3 s for the share to register, then
+// closes the tab (and window). Does NOT wait for or return the share URL.
+//
+// chrome.windows.create({ focused: false }) is used instead of
+// chrome.tabs.create({ active: false }) because background tabs in the current window
+// may not fully render React SPAs (no rendering resources allocated). A new window
+// with focused:false keeps the user's current window active while still giving the
+// new tab a full rendering context so Google Photos initialises its toolbar buttons.
 function triggerShareAction(albumUrl) {
   return new Promise(function(resolve) {
     var tabId = null;
@@ -142,8 +148,9 @@ function triggerShareAction(albumUrl) {
       resolve();
     }, 25000);
 
-    chrome.tabs.create({ url: albumUrl, active: false }, function(tab) {
-      tabId = tab.id;
+    chrome.windows.create({ url: albumUrl, focused: false }, function(win) {
+      if (!win || !win.tabs || !win.tabs.length) { clearTimeout(globalTimeout); resolve(); return; }
+      tabId = win.tabs[0].id;
 
       function onTabUpdated(id, changeInfo, updatedTab) {
         if (id !== tabId || changeInfo.status !== 'complete') return;

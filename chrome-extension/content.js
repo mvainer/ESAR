@@ -1020,45 +1020,88 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   }
 
   function scanScripts() {
+    // Build a complete map of (albumId → shareUrl) using greedy closest-distance
+    // pairing. A simple windowed search fails on the sharing page because multiple
+    // albums' data is stored contiguously — a ±2 KB window around album A can
+    // overlap album B's share URL. Instead we collect ALL (albumId, pos) and
+    // (shareUrl, pos) items in each script, then greedily pair each album ID with
+    // its nearest share URL so every URL is assigned to at most one album.
+    var SHARE_RE_G = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/g;
     var scripts = document.scripts;
+
     for (var s = 0; s < scripts.length; s++) {
       var src = scripts[s].textContent || '';
-      albumIds.forEach(function(id) {
-        if (!id || results[id]) return; // skip if empty or already found
+
+      // Only spend time on scripts that contain at least one unresolved album ID.
+      var relevant = albumIds.filter(function(id) { return id && !results[id] && src.indexOf(id) !== -1; });
+      if (!relevant.length) continue;
+
+      // Collect album-ID positions (first occurrence per ID in this script).
+      var idItems = [];
+      relevant.forEach(function(id) {
         var idx = src.indexOf(id);
-        if (idx === -1) return;
-        // Search 500 chars before + 2000 chars after the album ID position
-        var nearby = src.substring(Math.max(0, idx - 500), idx + 2000);
-        var m = nearby.match(SHARE_RE);
-        if (m) results[id] = m[0];
+        if (idx !== -1) idItems.push({ id: id, pos: idx });
+      });
+
+      // Collect all share-URL positions in this script.
+      SHARE_RE_G.lastIndex = 0;
+      var urlItems = [];
+      var m;
+      while ((m = SHARE_RE_G.exec(src)) !== null) {
+        urlItems.push({ url: m[0], pos: m.index });
+      }
+      if (!urlItems.length) continue;
+
+      // Build candidate (albumId, shareUrl, distance) pairs within 4 KB.
+      var candidates = [];
+      idItems.forEach(function(idItem) {
+        urlItems.forEach(function(urlItem) {
+          var dist = Math.abs(urlItem.pos - idItem.pos);
+          if (dist < 4000) candidates.push({ id: idItem.id, url: urlItem.url, dist: dist });
+        });
+      });
+
+      // Greedy assignment: sort by distance ascending, assign shortest pairs first.
+      // Each albumId and each shareUrl is used at most once.
+      candidates.sort(function(a, b) { return a.dist - b.dist; });
+      var usedUrls = {};
+      candidates.forEach(function(c) {
+        if (!results[c.id] && !usedUrls[c.url]) {
+          results[c.id] = c.url;
+          usedUrls[c.url] = true;
+        }
       });
     }
   }
 
-  function scanDomAnchors() {
-    // Supplement script scan: look for visible share-link anchors and try to
-    // associate them with album IDs by finding the album ID in nearby DOM context.
-    var anchors = document.querySelectorAll('a[href*="photos.app.goo.gl"]');
-    for (var a = 0; a < anchors.length; a++) {
-      var m = (anchors[a].href || '').match(SHARE_RE);
-      if (!m) continue;
-      var shareUrl = m[0];
-      // Walk up to 5 ancestors and check their innerHTML for an album ID.
-      var el = anchors[a];
-      for (var depth = 0; depth < 5 && el; depth++) {
-        var html = el.innerHTML || '';
-        albumIds.forEach(function(id) {
-          if (!id || results[id]) return;
-          if (html.indexOf(id) !== -1) results[id] = shareUrl;
-        });
-        el = el.parentElement;
+  function scanAlbumLinks() {
+    // Supplement script scan: on the sharing page each album card has a link
+    // like <a href="…/album/ALBUM_ID">. Walk up from that link to find a
+    // photos.app.goo.gl URL in the same card's subtree or text content.
+    albumIds.forEach(function(id) {
+      if (!id || results[id]) return;
+      var links = document.querySelectorAll('a[href*="' + id + '"]');
+      for (var i = 0; i < links.length; i++) {
+        var container = links[i];
+        for (var depth = 0; depth < 8 && container; depth++) {
+          // Check for a share anchor in this subtree.
+          var shareAnchors = container.querySelectorAll('a[href*="photos.app.goo.gl"]');
+          if (shareAnchors.length) {
+            var m = (shareAnchors[0].href || '').match(SHARE_RE);
+            if (m) { results[id] = m[0]; return; }
+          }
+          // Also check visible text content for the share URL pattern.
+          var m2 = (container.textContent || '').match(SHARE_RE);
+          if (m2) { results[id] = m2[0]; return; }
+          container = container.parentElement;
+        }
       }
-    }
+    });
   }
 
   function scan() {
     scanScripts();
-    scanDomAnchors();
+    scanAlbumLinks();
     if (allFound()) finish();
   }
 
