@@ -501,12 +501,17 @@ function scrapeAlbums() {
   return albums;
 }
 
-// Convert session-scoped Google Photos CDN URLs (photos.fife.usercontent.google.com,
-// photos.east1.usercontent.google.com, etc.) to the standard lh3.googleusercontent.com
-// domain, which is publicly accessible for images in shared albums without session cookies.
+// Normalize a Google Photos thumbnail URL so it loads publicly without session auth.
+// 1. Convert session-scoped CDN (photos.fife.usercontent.google.com etc.) → lh3.googleusercontent.com
+// 2. Strip ?authuser=N query param (session-specific, breaks cross-origin loads)
+// 3. Replace size+flag params (e.g. =s247-p-k-no) with =w400 — removes the -k auth flag
 function normalizeThumbUrl(url) {
   if (!url) return url;
-  return url.replace(/^https?:\/\/photos\.\w+\.usercontent\.google\.com\//, 'https://lh3.googleusercontent.com/');
+  url = url.replace(/^https?:\/\/photos\.\w+\.usercontent\.google\.com\//, 'https://lh3.googleusercontent.com/');
+  var q = url.indexOf('?');
+  if (q !== -1) url = url.substring(0, q);
+  url = url.replace(/=[swh]\d[^/]*$/, '=w400');
+  return url;
 }
 
 function getBestTitle(link) {
