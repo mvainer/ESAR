@@ -303,19 +303,24 @@
   function renderAlbums(albums) {
     var el = document.getElementById('albumList');
     if (!albums.length) {
-      el.innerHTML = '<div class="empty">No albums yet \u2014 use the form above to add the first one.</div>';
+      el.innerHTML = '<div class="empty">No albums yet.</div>';
       return;
     }
     var rows = albums.map(function(a) {
+      var thumb = a.thumbnail
+        ? '<img src="' + esc(a.thumbnail) + '" style="width:56px;height:56px;object-fit:cover;border-radius:4px;display:block;" onerror="this.style.display=\'none\'">'
+        : '<div style="width:56px;height:56px;background:#f1f3f4;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:22px;">\uD83D\uDCC1</div>';
       var link = a.photosUrl
         ? '<a class="album-link" href="' + esc(a.photosUrl) + '" target="_blank">\uD83D\uDCF7 View Album</a>'
         : '\u2014';
-      return '<tr><td class="album-title">' + esc(a.title) + '</td>' +
+      return '<tr>' +
+        '<td style="width:72px;padding:8px 12px;">' + thumb + '</td>' +
+        '<td class="album-title">' + esc(a.title) + '</td>' +
         '<td class="album-date">' + esc(a.dateAdded) + '</td>' +
         '<td>' + link + '</td>' +
         '<td><button class="btn-remove" onclick="removeAlbum(' + a.row + ',this)">Remove</button></td></tr>';
     }).join('');
-    el.innerHTML = '<table><thead><tr><th>Album</th><th>Date Added</th><th>Link</th><th></th></tr></thead>' +
+    el.innerHTML = '<table><thead><tr><th></th><th>Album</th><th>Date Added</th><th>Link</th><th></th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table>';
   }
 
