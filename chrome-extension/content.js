@@ -197,37 +197,32 @@ function makeModalLabel(text) {
   return lbl;
 }
 
-// Scan DOM (and embedded page data) for a photos.app.goo.gl share URL.
+// Scan the Share dialog DOM for a photos.app.goo.gl share URL.
+// Only reads from interactive UI elements (inputs, dialogs, anchors) so we never
+// accidentally return a cached URL belonging to a different album from the page's
+// embedded JS payload.
 function findShareUrl() {
   var SHARE_RE = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/;
 
-  // 1. Anchor hrefs
-  var anchors = document.querySelectorAll('a[href*="photos.app.goo.gl"]');
-  if (anchors.length) {
-    var m = String(anchors[0].href).match(SHARE_RE);
-    if (m) return m[0];
-  }
-
-  // 2. Input / textarea values (Share dialog puts the link in a copy-field)
+  // 1. Input / textarea values — the Share dialog puts the link in a copy-field
   var inputs = document.querySelectorAll('input, textarea');
   for (var i = 0; i < inputs.length; i++) {
     var mv = (inputs[i].value || '').match(SHARE_RE);
     if (mv) return mv[0];
   }
 
-  // 3. Open dialog text content
+  // 2. Open dialog text content
   var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
   for (var i = 0; i < dialogs.length; i++) {
     var mt = (dialogs[i].textContent || '').match(SHARE_RE);
     if (mt) return mt[0];
   }
 
-  // 4. Embedded page data (Google Photos encodes album state in <script> tags;
-  //    already-shared albums often have the share URL in the initial JS payload)
-  var scripts = document.scripts;
-  for (var s = 0; s < scripts.length; s++) {
-    var ms = (scripts[s].textContent || '').match(SHARE_RE);
-    if (ms) return ms[0];
+  // 3. Anchor hrefs visible in the Share dialog
+  var anchors = document.querySelectorAll('a[href*="photos.app.goo.gl"]');
+  if (anchors.length) {
+    var m = String(anchors[0].href).match(SHARE_RE);
+    if (m) return m[0];
   }
 
   return '';
