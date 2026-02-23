@@ -30,14 +30,39 @@ var SitesCreator = {
 
     if (!tab) {
       tab = ss.insertSheet(SitesCreator.TAB_NAME);
-      SitesCreator._initTab(tab);
     }
 
+    SitesCreator._ensureHeader(tab);
     return tab;
   },
 
-  _initTab: function(tab) {
-    tab.appendRow(['', 'Album', 'Date Added', 'Photos', 'View Album (read-only link)']);
+  /**
+   * Guarantee row 1 is the header row, regardless of how the sheet got into its current state.
+   *
+   * Cases handled:
+   *   A) Tab is empty          → write header at row 1
+   *   B) Row 1 IS the header   → no-op (fast path: single cell read)
+   *   C) Row 1 has album data  → insert a blank row 1, then write the header
+   *      (happens when someone deleted the header row but left album rows intact)
+   */
+  _ensureHeader: function(tab) {
+    var lastRow = tab.getLastRow();
+
+    if (lastRow === 0) {
+      SitesCreator._writeHeader(tab);
+      return;
+    }
+
+    if (String(tab.getRange(1, 2).getValue()) === 'Album') return;
+
+    // Album data is squatting in row 1 — push everything down by one row
+    tab.insertRowBefore(1);
+    SitesCreator._writeHeader(tab);
+  },
+
+  _writeHeader: function(tab) {
+    tab.getRange(1, 1, 1, 5)
+       .setValues([['', 'Album', 'Date Added', 'Photos', 'View Album (read-only link)']]);
 
     var header = tab.getRange(1, 1, 1, 5);
     header.setFontWeight('bold');
