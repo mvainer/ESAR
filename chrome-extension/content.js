@@ -971,6 +971,15 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     return true;
   }
 
+  // Show the helper banner immediately so the user knows what is happening
+  // and what to do if the automated click doesn't fire.
+  // Also hide any ESAR UI buttons that would clutter this transient tab.
+  injectShareBanner();
+  ['esar-manage-btn', 'esar-fab'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+
   function respond(shareUrl, reason) {
     if (responded) return;
     responded = true;
@@ -1112,7 +1121,7 @@ function injectShareBanner() {
     'font-family:Google Sans,Roboto,Arial,sans-serif',
     'box-shadow:0 2px 8px rgba(0,0,0,.3)', 'letter-spacing:.1px',
   ].join(';');
-  banner.textContent = '\uD83D\uDD17  ESAR: Click \u201CCreate link\u201D in the Share dialog below \u2014 this window will close automatically.';
+  banner.textContent = '\uD83D\uDD17  ESAR: Opening share dialog\u2026 click \u201CCreate link\u201D if prompted \u2014 this window closes automatically.';
   document.body.appendChild(banner);
 }
 
