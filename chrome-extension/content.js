@@ -26,6 +26,9 @@ function onNavigate() {
   removeById('esar-panel');
   removeById('esar-fab');
 
+  // Always show a "Manage" button on any Google Photos page
+  if (!document.getElementById('esar-manage-btn')) injectManageBtn();
+
   if (isAlbumsListPage()) {
     setTimeout(function() {
       if (!document.getElementById('esar-fab')) injectBulkFab();
@@ -35,6 +38,27 @@ function onNavigate() {
       if (!document.getElementById('esar-fab')) injectSingleFab();
     }, 900);
   }
+}
+
+function injectManageBtn() {
+  var btn = document.createElement('button');
+  btn.id = 'esar-manage-btn';
+  btn.textContent = '\uD83D\uDCCB Manage ESAR Albums';
+  btn.style.cssText = [
+    'position:fixed', 'bottom:28px', 'right:28px', 'z-index:2147483645',
+    'background:#e8f0fe', 'color:#1a73e8', 'border:1px solid #c5d4f6',
+    'border-radius:20px', 'padding:7px 16px', 'font-size:13px', 'font-weight:500',
+    'font-family:Google Sans,Roboto,Arial,sans-serif',
+    'cursor:pointer', 'box-shadow:0 2px 6px rgba(0,0,0,.2)',
+    'letter-spacing:.2px', 'white-space:nowrap',
+  ].join(';');
+  btn.addEventListener('mouseenter', function() { this.style.background = '#c5d4f6'; });
+  btn.addEventListener('mouseleave', function() { this.style.background = '#e8f0fe'; });
+  btn.onclick = function() {
+    if (!checkConfig()) return;
+    window.open(WEB_APP_URL, '_blank', 'noopener');
+  };
+  document.body.appendChild(btn);
 }
 
 function isAlbumsListPage() {
@@ -72,7 +96,7 @@ function showShareModal() {
   var modal = document.createElement('div');
   modal.id = 'esar-modal';
   modal.style.cssText = [
-    'position:fixed', 'bottom:88px', 'right:28px', 'z-index:2147483647',
+    'position:fixed', 'bottom:132px', 'right:28px', 'z-index:2147483647',
     'background:#fff', 'border-radius:12px', 'overflow:hidden', 'width:340px',
     'box-shadow:0 4px 24px rgba(0,0,0,.25)',
     'font-family:Google Sans,Roboto,Arial,sans-serif', 'font-size:14px', 'color:#202124',
@@ -537,7 +561,7 @@ function makeFab(label, bg) {
   var btn = document.createElement('button');
   btn.textContent = label;
   btn.style.cssText = [
-    'position:fixed', 'bottom:28px', 'right:28px', 'z-index:2147483646',
+    'position:fixed', 'bottom:72px', 'right:28px', 'z-index:2147483646',
     'background:' + bg, 'color:#fff', 'border:none', 'border-radius:24px',
     'padding:13px 22px', 'font-size:14px', 'font-weight:500',
     'font-family:Google Sans,Roboto,Arial,sans-serif',
