@@ -924,66 +924,121 @@ function clickCreateLinkSilent() {
 }
 
 // ── CLICK_SHARE_ONLY handler ──────────────────────────────────────────────────
-// Invoked by background.js when an album tab is opened for Phase 1.
+// Invoked by background.js when an album tab is opened for bulk sharing.
 // Finds the Share button, clicks it, enables link sharing (clicks "Create link"
-// if needed), then waits for the photos.app.goo.gl URL to appear in the DOM.
-// Responds with { ok, pageUrl, shareUrl, foundBtn, attempts } so the share URL
-// can be returned to the caller without a separate Phase 2 page scan.
+// ONCE if needed), then waits for the photos.app.goo.gl URL to appear in the DOM.
+// Responds with { ok, pageUrl, shareUrl, foundBtn, attempts, createLinkClicked }.
+// Every 3 s logs a diagnostic snapshot of the dialog state for debugging.
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   if (msg.type !== 'CLICK_SHARE_ONLY') return false;
 
-  var pageUrl    = location.href;
-  var responded  = false;
-  var btnClicked = false;
-  var btnAttempts = 0;
-  var domObserver, urlTimeout;
+  var pageUrl           = location.href;
+  var responded         = false;
+  var btnClicked        = false;
+  var createLinkClicked = false;
+  var btnAttempts       = 0;
+  var domObserver, urlTimeout, diagInterval;
 
-  // Check if the album already has a share URL in the page before touching the UI.
+  console.log('[ESAR] CLICK_SHARE_ONLY start | visibility=' + document.visibilityState +
+              ' | url=' + pageUrl);
+
+  // Fast path: album already has a share URL baked into the page data.
   var existing = findShareUrl();
   if (existing) {
+    console.log('[ESAR] CLICK_SHARE_ONLY: already shared → ' + existing);
     sendResponse({ ok: true, pageUrl: pageUrl, shareUrl: existing,
-                   foundBtn: false, alreadyShared: true, attempts: 0 });
+                   foundBtn: false, alreadyShared: true, attempts: 0,
+                   createLinkClicked: false });
     return true;
   }
 
-  function respond(shareUrl) {
+  function respond(shareUrl, reason) {
     if (responded) return;
     responded = true;
-    if (domObserver) { domObserver.disconnect(); domObserver = null; }
-    if (urlTimeout)  { clearTimeout(urlTimeout);  urlTimeout  = null; }
+    if (domObserver)  { domObserver.disconnect();    domObserver  = null; }
+    if (urlTimeout)   { clearTimeout(urlTimeout);    urlTimeout   = null; }
+    if (diagInterval) { clearInterval(diagInterval); diagInterval = null; }
+    console.log('[ESAR] CLICK_SHARE_ONLY respond | reason=' + reason +
+                ' | shareUrl=' + (shareUrl || '(none)') +
+                ' | foundBtn=' + btnClicked + ' | attempts=' + btnAttempts +
+                ' | createLinkClicked=' + createLinkClicked);
     sendResponse({ ok: true, pageUrl: pageUrl, shareUrl: shareUrl || '',
-                   foundBtn: btnClicked, attempts: btnAttempts });
+                   foundBtn: btnClicked, attempts: btnAttempts,
+                   createLinkClicked: createLinkClicked });
   }
 
-  // Watch the DOM for the share URL to appear after the dialog opens and
-  // the "Create link" / "Get link" button is clicked.
+  // Diagnostic snapshot every 3 s — tells us exactly what's in the Share dialog.
+  diagInterval = setInterval(function() {
+    var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+    var clBtn   = findCreateLinkBtn();
+    console.log('[ESAR] CLICK_SHARE_ONLY diag | dialogs=' + dialogs.length +
+                ' | btnClicked=' + btnClicked +
+                ' | createLinkClicked=' + createLinkClicked +
+                ' | createLinkBtn=' + (clBtn ? '"' + clBtn.textContent.trim().substring(0, 40) + '"' : 'null'));
+    for (var d = 0; d < dialogs.length; d++) {
+      console.log('[ESAR] dialog[' + d + '] text (300):', dialogs[d].textContent.replace(/\s+/g, ' ').trim().substring(0, 300));
+      var inputs = dialogs[d].querySelectorAll('input, textarea');
+      for (var i = 0; i < inputs.length; i++) {
+        console.log('[ESAR] dialog input[' + i + ']: value="' + (inputs[i].value || '') +
+                    '" placeholder="' + (inputs[i].placeholder || '') + '"');
+      }
+    }
+    var url = findShareUrl();
+    if (url) console.log('[ESAR] CLICK_SHARE_ONLY diag | findShareUrl()=' + url);
+  }, 3000);
+
+  // Watch the DOM for the share URL, and click "Create link" at most ONCE.
+  // (Clicking on every mutation could toggle link sharing off and on.)
   domObserver = new MutationObserver(function() {
     var url = findShareUrl();
-    if (url) { respond(url); return; }
-    // Keep nudging "Create link" if the dialog is open but the URL isn't there yet.
-    if (btnClicked) clickCreateLinkSilent();
+    if (url) { respond(url, 'url-found'); return; }
+    if (btnClicked && !createLinkClicked) {
+      var clBtn = findCreateLinkBtn();
+      if (clBtn) {
+        createLinkClicked = true;
+        console.log('[ESAR] CLICK_SHARE_ONLY: clicking "' +
+                    clBtn.textContent.trim().substring(0, 40) + '"');
+        clBtn.click();
+      }
+    }
   });
   domObserver.observe(document.body, { childList: true, subtree: true });
 
-  // Timeout: if the URL never appears, respond with '' so the tab gets closed.
-  urlTimeout = setTimeout(function() { respond(''); }, 18000);
+  // 18 s hard deadline — respond with '' so the background tab gets closed.
+  urlTimeout = setTimeout(function() { respond('', '18s-timeout'); }, 18000);
 
-  // Poll for the Share button (SPA may still be rendering the toolbar).
+  // Poll for the Share button (SPA renders asynchronously after page load).
   var btnInterval = setInterval(function() {
     btnAttempts++;
     var btn = findShareButtonEl();
     if (btn) {
       clearInterval(btnInterval);
       btnClicked = true;
+      console.log('[ESAR] CLICK_SHARE_ONLY: Share btn found on attempt ' + btnAttempts +
+                  ' | label="' + (btn.getAttribute('aria-label') || btn.textContent.trim().substring(0, 30)) + '"');
       btn.click();
       return;
     }
     if (btnAttempts >= 20) { // 20 × 500 ms = 10 s
       clearInterval(btnInterval);
-      respond(''); // Share button never appeared — album tab may not have rendered fully
+      respond('', 'share-btn-not-found');
     }
   }, 500);
 
   return true;
 });
+
+// Find "Create link" / "Get link" / "Turn on link sharing" button.
+// Returns the element (without clicking it), or null.
+function findCreateLinkBtn() {
+  var keywords = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
+  var els = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
+  for (var i = 0; i < els.length; i++) {
+    var text = (els[i].textContent || els[i].getAttribute('aria-label') || '').toLowerCase().trim();
+    for (var k = 0; k < keywords.length; k++) {
+      if (text === keywords[k] || text.indexOf(keywords[k]) === 0) return els[i];
+    }
+  }
+  return null;
+}
 
