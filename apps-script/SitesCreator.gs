@@ -83,18 +83,10 @@ var SitesCreator = {
   // ── Add Album ─────────────────────────────────────────────────────────────
 
   /**
-   * Add a new album row submitted via the admin web app.
-   *
-   * @param {string} title        Album title
-   * @param {string} photosUrl    Google Photos share link (photos.app.goo.gl/...)
-   * @param {string} thumbnailUrl Optional cover photo URL (right-click cover → Copy image address)
-   * @returns {string} The photosUrl that was saved
-   */
-  /**
    * @param {string} title
-   * @param {string} photosUrl   Share link for members (photos.app.goo.gl/…)
+   * @param {string} photosUrl     Share link for members (photos.app.goo.gl/…)
    * @param {string} thumbnailUrl  CDN URL stored in =IMAGE() formula (col 1) for Sheets display
-   * @param {string} [webThumbnail]  data URL stored in col 6 for web app display
+   * @param {string} [webThumbnail]  data URL stored in col 6 for web app/gallery display
    */
   addAlbumDirect: function(title, photosUrl, thumbnailUrl, webThumbnail) {
     var tab = SitesCreator.getOrCreateTab();
