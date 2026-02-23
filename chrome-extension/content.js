@@ -429,6 +429,8 @@ function scrapeAlbums() {
   var albums = [];
 
   var links = document.querySelectorAll('a[href*="/album/"]');
+  console.log('[ESAR] scrapeAlbums: found', links.length, 'raw album links');
+
   Array.prototype.forEach.call(links, function(link) {
     var href = link.href; // already absolute
     if (!href) return;
@@ -455,24 +457,32 @@ function scrapeAlbums() {
     var thumbnail = '';
     if (img && img.src) {
       thumbnail = img.src;
+      console.log('[ESAR]', title, '→ thumbnail via <img>:', thumbnail.substring(0, 80));
     } else {
       var els = [link].concat(Array.prototype.slice.call(link.querySelectorAll('*')));
+      console.log('[ESAR]', title, '→ no <img>, scanning', els.length, 'elements for background-image');
       for (var j = 0; j < els.length && !thumbnail; j++) {
         try {
           var bg = window.getComputedStyle(els[j]).backgroundImage;
           if (bg && bg !== 'none') {
+            console.log('[ESAR]   el[' + j + '] (' + els[j].tagName + '.' + els[j].className.toString().split(' ')[0] + ') bg:', bg.substring(0, 100));
             var bgMatch = bg.match(/url\(["']?([^"')]+)["']?\)/);
             if (bgMatch && (bgMatch[1].indexOf('googleusercontent') !== -1 || bgMatch[1].indexOf('lh3') !== -1)) {
               thumbnail = bgMatch[1];
+              console.log('[ESAR]   ✓ captured thumbnail from el[' + j + ']:', thumbnail.substring(0, 80));
             }
           }
         } catch(e) {}
       }
+      if (!thumbnail) console.log('[ESAR]', title, '→ ✗ no thumbnail found');
     }
 
     albums.push({ title: title, url: href, thumbnail: thumbnail });
   });
 
+  console.log('[ESAR] scrapeAlbums result:', albums.map(function(a) {
+    return a.title + ' [thumb:' + (a.thumbnail ? 'yes' : 'NO') + ']';
+  }));
   return albums;
 }
 
