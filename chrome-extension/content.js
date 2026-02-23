@@ -1034,85 +1034,53 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
 
   // Watch the DOM for the share URL.
   // The Google Photos Share flow is two steps:
-  //   1. dialog[0] ("Invite to album") has a hidden "Create link" element — clicking
-  //      it navigates to dialog[1] ("Create link to share").
-  //   2. dialog[1] has the *visible* "Create link" button that enables sharing.
-  // We click the hidden navigation element once, then click the visible action button.
-  // createLinkClicked is only set true after a VISIBLE button is clicked so we don't
-  // stop after the navigation step.
+  //   1. dialog[0] ("Invite to album") has a nav <div role="button" jsname="VGkEfd">
+  //      labelled "Create link" — clicking it opens dialog[1].
+  //   2. dialog[1] ("Create link to share") has the real action <button jsname="N9GOnc">
+  //      also labelled "Create link" — clicking it calls the sharing API.
+  // Both elements are visible once dialog[1] is open, so we MUST use separate
+  // search functions: findCreateLinkBtn() for step 1 (global, any tag), and
+  // findActionCreateLinkBtn() for step 2 (scoped inside dialog[1] by heading text).
   domObserver = new MutationObserver(function() {
     var url = findShareUrl();
     if (url) { respond(url, 'url-found'); return; }
 
     if (!btnClicked || createLinkClicked) return;
 
-    var clBtn = findCreateLinkBtn();
-    if (!clBtn) return;
-
-    var rect = clBtn.getBoundingClientRect();
-    var isVisible = rect.width > 0 && rect.height > 0;
-
-    if (isVisible) {
-      // Step 2: visible button in dialog[1] — this is the real share action.
+    if (!hiddenCreateLinkClicked) {
+      // Step 1: click the "Create link" nav element in dialog[0] to open dialog[1].
+      var navEl = findCreateLinkBtn();
+      if (!navEl) return;
+      hiddenCreateLinkClicked = true;
+      relayLog('STEP1 nav click jsname=' + (navEl.getAttribute('jsname') || navEl.tagName));
+      navEl.click();
+    } else {
+      // Step 2: click the real "Create link" action button inside dialog[1].
+      // Uses findActionCreateLinkBtn() which scopes the search to the dialog
+      // whose heading is "Create link to share" — avoids re-clicking the nav DIV.
+      var actionBtn = findActionCreateLinkBtn();
+      if (!actionBtn) return;
       createLinkClicked = true;
+      var rect = actionBtn.getBoundingClientRect();
       var cx = Math.round(rect.left + rect.width  / 2);
       var cy = Math.round(rect.top  + rect.height / 2);
-
-      // ── Diagnostic: log everything needed to understand the click target ──
-      // 1. Full outerHTML of the button we are about to click.
-      relayLog('STEP2_BTN outerHTML: ' + clBtn.outerHTML.substring(0, 800));
-
-      // 2. Full outerHTML of every visible dialog so we can see the dialog structure.
-      var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
-      for (var di = 0; di < dialogs.length; di++) {
-        var dr = dialogs[di].getBoundingClientRect();
-        relayLog('STEP2_DIALOG[' + di + '] visible=' + (dr.width > 0) +
-                 ' outerHTML: ' + dialogs[di].outerHTML.substring(0, 2000));
-      }
-
-      // 3. All elements matching "create link" keywords — tag, text, rect, outerHTML.
-      var kwAll = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
-      var allEls = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
-      var matchIdx = 0;
-      for (var ai = 0; ai < allEls.length; ai++) {
-        var aText = (allEls[ai].textContent || allEls[ai].getAttribute('aria-label') || '').toLowerCase().trim();
-        for (var ak = 0; ak < kwAll.length; ak++) {
-          if (aText === kwAll[ak] || aText.indexOf(kwAll[ak]) === 0) {
-            var ar = allEls[ai].getBoundingClientRect();
-            relayLog('STEP2_ALL_MATCHES[' + matchIdx + '] tag=' + allEls[ai].tagName +
-                     ' text="' + allEls[ai].textContent.trim().substring(0, 30) + '"' +
-                     ' visible=' + (ar.width > 0 && ar.height > 0) +
-                     ' rect={w:' + Math.round(ar.width) + ',h:' + Math.round(ar.height) + '}' +
-                     ' outerHTML: ' + allEls[ai].outerHTML.substring(0, 400));
-            matchIdx++;
-            break;
-          }
-        }
-      }
-
-      relayLog('STEP2_CLICK dispatching mousedown+mouseup+click at cx=' + cx + ' cy=' + cy);
-      // Dispatch full mouse event sequence with real coordinates.
-      ['mousedown', 'mouseup', 'click'].forEach(function(type) {
-        clBtn.dispatchEvent(new MouseEvent(type, {
+      relayLog('STEP2 action click jsname=' + (actionBtn.getAttribute('jsname') || '?') +
+               ' rect={w:' + Math.round(rect.width) + ',h:' + Math.round(rect.height) + '}');
+      // Dispatch full pointer+mouse event sequence so JsAction handlers fire.
+      ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function(type) {
+        var isPointer = type === 'pointerdown' || type === 'pointerup';
+        actionBtn.dispatchEvent(new (isPointer ? PointerEvent : MouseEvent)(type, {
           bubbles: true, cancelable: true, view: window,
           clientX: cx, clientY: cy, screenX: cx, screenY: cy,
-          buttons: 1, button: 0,
+          buttons: (type === 'pointerup' || type === 'mouseup') ? 0 : 1,
+          button: 0, pointerId: 1, isPrimary: true,
         }));
       });
-
-      // 200 ms after click: log DOM state to see if anything changed.
       setTimeout(function() {
-        var urlAfter = findShareUrl();
-        relayLog('STEP2_POST200ms shareUrl=' + (urlAfter || '(none)') +
+        relayLog('STEP2_POST200ms shareUrl=' + (findShareUrl() || '(none)') +
                  ' dialogs=' + document.querySelectorAll('[role="dialog"],[aria-modal="true"]').length);
       }, 200);
-    } else if (!hiddenCreateLinkClicked) {
-      // Step 1: hidden navigation element in dialog[0] — click once to open dialog[1].
-      hiddenCreateLinkClicked = true;
-      relayLog('STEP1_BTN outerHTML: ' + clBtn.outerHTML.substring(0, 400));
-      clBtn.click();
     }
-    // If hiddenCreateLinkClicked && !isVisible: already navigated, waiting for dialog[1].
   });
   domObserver.observe(document.body, { childList: true, subtree: true });
 
@@ -1166,11 +1134,9 @@ function injectShareBanner() {
   document.body.appendChild(banner);
 }
 
-// Find "Create link" / "Get link" / "Turn on link sharing" button.
-// Prefers VISIBLE elements (non-zero bounding rect) so that when both dialog[0]'s
-// hidden nav element AND dialog[1]'s visible action button are in the DOM, the
-// visible one is returned. Falls back to the first hidden match (for step 1).
-// Returns the element (without clicking it), or null.
+// Find the nav "Create link" element in dialog[0] — used for step 1.
+// Accepts any tag (the nav element is a <div role="button">). Prefers visible
+// elements, falls back to any match so it also fires if the element is hidden.
 function findCreateLinkBtn() {
   var keywords = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
   var els = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
@@ -1182,10 +1148,33 @@ function findCreateLinkBtn() {
         var r = els[i].getBoundingClientRect();
         if (r.width > 0 && r.height > 0) return els[i]; // visible → return immediately
         if (!firstMatch) firstMatch = els[i];             // hidden → remember as fallback
-        break; // no need to check more keywords for this element
+        break;
       }
     }
   }
   return firstMatch;
+}
+
+// Find the real "Create link" action <button> inside dialog[1].
+// Identifies dialog[1] by its heading text ("Create link to share") so it is
+// never confused with the nav DIV in dialog[0] which shares the same label.
+// Returns the visible button, or null if dialog[1] is not yet open.
+function findActionCreateLinkBtn() {
+  var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+  for (var d = 0; d < dialogs.length; d++) {
+    // Identify the "Create link to share" dialog by its h1 heading.
+    var heading = dialogs[d].querySelector('h1');
+    if (!heading) continue;
+    if (heading.textContent.trim().toLowerCase() !== 'create link to share') continue;
+    // Scoped to this dialog — find the action button by label.
+    var buttons = dialogs[d].querySelectorAll('button');
+    for (var b = 0; b < buttons.length; b++) {
+      var label = (buttons[b].textContent || buttons[b].getAttribute('aria-label') || '').trim().toLowerCase();
+      if (label !== 'create link' && label.indexOf('create link') !== 0) continue;
+      var r = buttons[b].getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return buttons[b];
+    }
+  }
+  return null;
 }
 
