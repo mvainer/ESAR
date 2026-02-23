@@ -20,7 +20,7 @@ function serverGetAlbums() {
     var lastRow = tab.getLastRow();
     if (lastRow <= 1) return { success: true, albums: [] };
 
-    var values       = tab.getRange(2, 1, lastRow - 1, 6).getValues();  // cols 1–6
+    var values       = tab.getRange(2, 1, lastRow - 1, 7).getValues();  // cols 1–7
     var linkFormulas = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
 
     var albums = [];
@@ -33,7 +33,9 @@ function serverGetAlbums() {
       var photosUrl   = urlMatch ? urlMatch[1] : String(values[i][4] || '');
 
       // Col 6 (index 5): data URL stored by the Chrome extension — no cross-origin auth needed.
-      var thumbnail = String(values[i][5] || '');
+      var thumbnail   = String(values[i][5] || '');
+      // Col 7 (index 6): optional description entered by the site editor in the spreadsheet.
+      var description = String(values[i][6] || '');
 
       var dateVal   = values[i][2];
       var dateAdded = '';
@@ -46,10 +48,11 @@ function serverGetAlbums() {
       }
 
       albums.push({
-        title:     String(title),
-        dateAdded: dateAdded,
-        photosUrl: photosUrl,
-        thumbnail: thumbnail
+        title:       String(title),
+        dateAdded:   dateAdded,
+        photosUrl:   photosUrl,
+        thumbnail:   thumbnail,
+        description: description
       });
     }
 

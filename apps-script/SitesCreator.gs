@@ -53,28 +53,41 @@ var SitesCreator = {
       return;
     }
 
-    if (String(tab.getRange(1, 2).getValue()) === 'Album') return;
+    if (String(tab.getRange(1, 2).getValue()) !== 'Album') {
+      // Album data is squatting in row 1 — push everything down by one row
+      tab.insertRowBefore(1);
+      SitesCreator._writeHeader(tab);
+      return;
+    }
 
-    // Album data is squatting in row 1 — push everything down by one row
-    tab.insertRowBefore(1);
-    SitesCreator._writeHeader(tab);
+    // Header exists. Migrate: add col 7 Description header if not yet present.
+    if (!tab.getRange(1, 7).getValue()) {
+      tab.getRange(1, 7).setValue('Description')
+        .setFontWeight('bold')
+        .setBackground('#1a73e8')
+        .setFontColor('#ffffff')
+        .setFontSize(11);
+      tab.setColumnWidth(7, 300);
+    }
   },
 
   _writeHeader: function(tab) {
-    tab.getRange(1, 1, 1, 5)
-       .setValues([['', 'Album', 'Date Added', 'Photos', 'View Album (read-only link)']]);
+    tab.getRange(1, 1, 1, 7)
+       .setValues([['', 'Album', 'Date Added', 'Photos', 'View Album (read-only link)', '', 'Description']]);
 
-    var header = tab.getRange(1, 1, 1, 5);
+    var header = tab.getRange(1, 1, 1, 7);
     header.setFontWeight('bold');
     header.setBackground('#1a73e8');
     header.setFontColor('#ffffff');
     header.setFontSize(11);
 
-    tab.setColumnWidth(1, 220);  // Thumbnail
+    tab.setColumnWidth(1, 220);  // Thumbnail (=IMAGE formula)
     tab.setColumnWidth(2, 240);  // Album title
-    tab.setColumnWidth(3, 120);  // Date
-    tab.setColumnWidth(4,  70);  // Photo count
-    tab.setColumnWidth(5, 200);  // Link
+    tab.setColumnWidth(3, 120);  // Date Added
+    tab.setColumnWidth(4,  70);  // (unused)
+    tab.setColumnWidth(5, 200);  // View Album link
+    tab.setColumnWidth(6,   1);  // Web Thumbnail data URL — collapse; not for manual editing
+    tab.setColumnWidth(7, 300);  // Description — edited directly in Sheets
 
     tab.setFrozenRows(1);
     tab.setRowHeight(1, 32);
@@ -119,7 +132,7 @@ var SitesCreator = {
     }
 
     if (newRow % 2 === 0) {
-      tab.getRange(newRow, 1, 1, 6).setBackground('#f8f9fa');
+      tab.getRange(newRow, 1, 1, 7).setBackground('#f8f9fa');
     }
 
     return photosUrl;
@@ -136,7 +149,7 @@ var SitesCreator = {
     var lastRow = tab.getLastRow();
     if (lastRow <= 1) return [];
 
-    var values       = tab.getRange(2, 1, lastRow - 1, 6).getValues();  // cols 1–6
+    var values       = tab.getRange(2, 1, lastRow - 1, 7).getValues();  // cols 1–7
     var linkFormulas = tab.getRange(2, 5, lastRow - 1, 1).getFormulas();
 
     var albums = [];
@@ -154,15 +167,16 @@ var SitesCreator = {
       var thumbnail = String(values[i][5] || '');
 
       albums.push({
-        row:       i + 2,
-        title:     String(title),
-        dateAdded: (function(v) {
+        row:         i + 2,
+        title:       String(title),
+        dateAdded:   (function(v) {
           if (!v) return '';
           if (v instanceof Date) return v.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
           return String(v);
         })(values[i][2]),
-        photosUrl: photosUrl,
-        thumbnail: thumbnail
+        photosUrl:   photosUrl,
+        thumbnail:   thumbnail,
+        description: String(values[i][6] || '')  // col 7 — site editor fills in Sheets
       });
     }
 
