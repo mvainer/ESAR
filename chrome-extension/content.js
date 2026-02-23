@@ -467,7 +467,7 @@ function scrapeAlbums() {
           if (bg && bg !== 'none') {
             console.log('[ESAR]   el[' + j + '] (' + els[j].tagName + '.' + els[j].className.toString().split(' ')[0] + ') bg:', bg.substring(0, 100));
             var bgMatch = bg.match(/url\(["']?([^"')]+)["']?\)/);
-            if (bgMatch && (bgMatch[1].indexOf('googleusercontent') !== -1 || bgMatch[1].indexOf('lh3') !== -1)) {
+            if (bgMatch && (bgMatch[1].indexOf('googleusercontent') !== -1 || bgMatch[1].indexOf('usercontent.google.com') !== -1 || bgMatch[1].indexOf('lh3') !== -1)) {
               thumbnail = bgMatch[1];
               console.log('[ESAR]   ✓ captured thumbnail from el[' + j + ']:', thumbnail.substring(0, 80));
             }
@@ -489,20 +489,29 @@ function scrapeAlbums() {
 function getBestTitle(link) {
   // 1. aria-label on the link element itself
   var label = link.getAttribute('aria-label');
-  if (label && label !== 'Google Photos') return cleanAriaLabel(label);
+  if (label && label !== 'Google Photos') {
+    console.log('[ESAR]   title: aria-label (raw):', JSON.stringify(label), '→', JSON.stringify(cleanAriaLabel(label)));
+    return cleanAriaLabel(label);
+  }
 
   // 2. aria-label on the nearest ancestor that has one
   var el = link.parentElement;
   for (var i = 0; i < 4; i++) {
     if (!el) break;
     label = el.getAttribute('aria-label');
-    if (label && label !== 'Google Photos') return cleanAriaLabel(label);
+    if (label && label !== 'Google Photos') {
+      console.log('[ESAR]   title: ancestor[' + i + '] aria-label (raw):', JSON.stringify(label), '→', JSON.stringify(cleanAriaLabel(label)));
+      return cleanAriaLabel(label);
+    }
     el = el.parentElement;
   }
 
   // 3. alt attribute on a child <img>
   var img = link.querySelector('img');
-  if (img && img.alt && img.alt !== 'Google Photos') return img.alt.trim();
+  if (img && img.alt && img.alt !== 'Google Photos') {
+    console.log('[ESAR]   title: img.alt:', JSON.stringify(img.alt));
+    return img.alt.trim();
+  }
 
   // 4. visible text content (last resort) — strip item count and menu noise
   var text = link.textContent
@@ -510,7 +519,10 @@ function getBestTitle(link) {
     .replace(/More options/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (text && text !== 'Google Photos') return text;
+  if (text && text !== 'Google Photos') {
+    console.log('[ESAR]   title: textContent (fallback):', JSON.stringify(text));
+    return text;
+  }
 
   return '';
 }
