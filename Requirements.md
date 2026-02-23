@@ -95,7 +95,7 @@ web app (backend + member gallery).
 ## Gallery App — Member-Facing Gallery
 
 - Separate Apps Script project in `gallery-app/` — deployed independently of the admin app
-- Stable URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbyybOTms0cpX59fCJhpUNJ8CnegIlCH_R8rheXFjDLw2wKWAOp1Rp0LD5aw7iTcYbFNKA/exec`
+- Stable URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbxgW2uZqhNR1jMZTNWfhbtKXbf4bzXBnw9T1ZqrFfOlV7bGx5IamiEq3xkDREh-437HLA/exec`
 - Reads directly from the spreadsheet by hardcoded ID — no dependency on the admin app URL
 - Responsive card grid: `repeat(auto-fill, minmax(260px, 1fr))`
 - Each card shows: 200px thumbnail (or placeholder), album title, date added, "📷 View Album" chip
@@ -130,8 +130,8 @@ web app (backend + member gallery).
   3. Update deployment ID in `content.js`, `Requirements.md` → reload Chrome extension
 
 ### Gallery App (gallery-app/)
-- Deployment ID: `AKfycbyybOTms0cpX59fCJhpUNJ8CnegIlCH_R8rheXFjDLw2wKWAOp1Rp0LD5aw7iTcYbFNKA`
-- URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbyybOTms0cpX59fCJhpUNJ8CnegIlCH_R8rheXFjDLw2wKWAOp1Rp0LD5aw7iTcYbFNKA/exec`
+- Deployment ID: `AKfycbxgW2uZqhNR1jMZTNWfhbtKXbf4bzXBnw9T1ZqrFfOlV7bGx5IamiEq3xkDREh-437HLA`
+- URL: `https://script.google.com/a/macros/kcesar.org/s/AKfycbxgW2uZqhNR1jMZTNWfhbtKXbf4bzXBnw9T1ZqrFfOlV7bGx5IamiEq3xkDREh-437HLA/exec`
 - **Deploy workflow (code update):**
   1. `cd gallery-app && clasp push --force`
   2. Apps Script UI → New deployment → authorize → update Sites embed URL
