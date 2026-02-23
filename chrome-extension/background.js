@@ -76,18 +76,9 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
   // ── TRIGGER_SHARE ────────────────────────────────────────────────────────────
   if (message.type === 'TRIGGER_SHARE') {
     console.log('[ESAR] TRIGGER_SHARE →', message.albumUrl);
-    triggerShareAction(message.albumUrl).then(function() {
-      sendResponse({ ok: true });
-    });
-    return true;
-  }
-
-  // ── COLLECT_FROM_SHARING_PAGE ────────────────────────────────────────────────
-  if (message.type === 'COLLECT_FROM_SHARING_PAGE') {
-    console.log('[ESAR] COLLECT_FROM_SHARING_PAGE for', message.albums.length, 'albums:',
-      message.albums.map(function(a) { return a.url; }));
-    collectSharingPageUrls(message.albums).then(function(results) {
-      sendResponse({ results: results });
+    triggerShareAction(message.albumUrl).then(function(result) {
+      console.log('[ESAR] TRIGGER_SHARE done, shareUrl:', result.shareUrl || '(none)');
+      sendResponse({ ok: true, shareUrl: result.shareUrl });
     });
     return true;
   }
@@ -133,28 +124,26 @@ function getShareUrl(albumUrl) {
   });
 }
 
-// Opens the album in a new unfocused window, clicks Share → Create link to initiate
-// link sharing on Google Photos' servers, waits 3 s for the share to register, then
-// closes the tab (and window). Does NOT wait for or return the share URL.
-//
-// chrome.windows.create({ focused: false }) is used instead of
-// chrome.tabs.create({ active: false }) because background tabs in the current window
-// may not fully render React SPAs (no rendering resources allocated). A new window
-// with focused:false keeps the user's current window active while still giving the
-// new tab a full rendering context so Google Photos initialises its toolbar buttons.
+// Opens the album in a new unfocused window (focused:false keeps the user's current
+// window active while giving this tab a full rendering context so Google Photos
+// initialises its SPA toolbar). Sends CLICK_SHARE_ONLY, which finds the Share
+// button, clicks it, enables link sharing, and waits for the photos.app.goo.gl
+// URL to appear in the dialog — then responds with it. Closes the tab and resolves
+// with { shareUrl } so the caller can use the URL without a separate collection step.
 function triggerShareAction(albumUrl) {
   return new Promise(function(resolve) {
     var tabId = null;
 
+    // 35 s covers 5 s SPA wait + 10 s Share-button poll + 18 s URL watch + slack.
     var globalTimeout = setTimeout(function() {
       if (tabId != null) chrome.tabs.remove(tabId, function() {});
-      resolve();
-    }, 25000);
+      resolve({ shareUrl: '' });
+    }, 35000);
 
     chrome.windows.create({ url: albumUrl, focused: false }, function(win) {
       if (!win || !win.tabs || !win.tabs.length) {
         console.log('[ESAR] triggerShareAction: window create failed for', albumUrl);
-        clearTimeout(globalTimeout); resolve(); return;
+        clearTimeout(globalTimeout); resolve({ shareUrl: '' }); return;
       }
       tabId = win.tabs[0].id;
       console.log('[ESAR] triggerShareAction: window', win.id, 'tab', tabId, 'created for', albumUrl);
@@ -177,12 +166,9 @@ function triggerShareAction(albumUrl) {
             } else {
               console.log('[ESAR] triggerShareAction: CLICK_SHARE_ONLY response:', JSON.stringify(resp));
             }
-            // Wait for the share to register server-side before closing the tab.
-            setTimeout(function() {
-              clearTimeout(globalTimeout);
-              chrome.tabs.remove(tabId, function() {});
-              resolve();
-            }, 3000);
+            clearTimeout(globalTimeout);
+            chrome.tabs.remove(tabId, function() {});
+            resolve({ shareUrl: (resp && resp.shareUrl) || '' });
           });
         }, 5000);
       }
@@ -192,56 +178,3 @@ function triggerShareAction(albumUrl) {
   });
 }
 
-// Opens photos.google.com/sharing in a background tab and asks the content script
-// to scan the page for share URLs matching the given albums (by album ID extracted
-// from each album's URL). Returns { albumId: shareUrl } for albums it found.
-function collectSharingPageUrls(albums) {
-  return new Promise(function(resolve) {
-    var tabId = null;
-
-    var globalTimeout = setTimeout(function() {
-      if (tabId != null) chrome.tabs.remove(tabId, function() {});
-      resolve({});
-    }, 90000);
-
-    chrome.tabs.create({ url: 'https://photos.google.com/u/0/sharing', active: false }, function(tab) {
-      tabId = tab.id;
-      console.log('[ESAR] collectSharingPageUrls: tab', tabId, 'created for /sharing');
-
-      function onTabUpdated(id, changeInfo, updatedTab) {
-        if (id !== tabId || changeInfo.status !== 'complete') return;
-        if (!updatedTab.url || updatedTab.url.indexOf('photos.google.com') === -1) {
-          console.log('[ESAR] collectSharingPageUrls: unexpected URL:', updatedTab.url);
-          return;
-        }
-        chrome.tabs.onUpdated.removeListener(onTabUpdated);
-        console.log('[ESAR] collectSharingPageUrls: /sharing tab loaded', updatedTab.url, '— waiting 4 s');
-
-        // Give the SPA time to render and populate script data.
-        setTimeout(function() {
-          console.log('[ESAR] collectSharingPageUrls: sending WATCH_SHARING_PAGE_CONTENT');
-          chrome.tabs.sendMessage(tabId, {
-            type: 'WATCH_SHARING_PAGE_CONTENT',
-            albums: albums
-          }, function(response) {
-            clearTimeout(globalTimeout);
-            chrome.tabs.remove(tabId, function() {});
-            if (chrome.runtime.lastError) {
-              console.log('[ESAR] collectSharingPageUrls: WATCH response error:', chrome.runtime.lastError.message);
-              resolve({}); return;
-            }
-            // Print all debug lines collected by the content script.
-            if (response && response.debug) {
-              response.debug.forEach(function(line) { console.log('[ESAR/sharing]', line); });
-            }
-            var results = (response && response.results) || {};
-            console.log('[ESAR] collectSharingPageUrls: final results:', JSON.stringify(results));
-            resolve(results);
-          });
-        }, 4000);
-      }
-
-      chrome.tabs.onUpdated.addListener(onTabUpdated);
-    });
-  });
-}

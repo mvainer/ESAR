@@ -467,75 +467,50 @@ function submitSelected() {
   // Switch panel to non-blocking progress view — panel stays open and interactive.
   showProgressView(albums);
 
-  // ── Phase 1: Trigger share for each album (sequential, background tabs) ──────
-  // Each album is opened in a hidden tab, Share → Create link is clicked, and
-  // the tab closes after 3 s. No waiting for the share URL.
-  var triggered = 0;
-  updateProgressNote('Phase 1 of 2: Triggering shares\u2026 (0\u2009/\u2009' + total + ')');
+  // ── Phase 1: Enable sharing and collect share URLs (sequential, unfocused windows) ──
+  // For each album: open tab → click Share → Create link → wait for URL → close tab.
+  // The share URL is returned directly from CLICK_SHARE_ONLY (no second collection pass).
+  var done = 0;
+  updateProgressNote('Enabling sharing\u2026 (0\u2009/\u2009' + total + ')');
 
   albums.reduce(function(chain, album) {
     return chain.then(function() {
       setAlbumStatus(album.url, 'triggering');
       return new Promise(function(resolve) {
         try {
-          chrome.runtime.sendMessage({ type: 'TRIGGER_SHARE', albumUrl: album.url }, function() {
-            if (chrome.runtime.lastError) {/* ignore — tab may have closed before responding */}
-            setAlbumStatus(album.url, 'triggered');
-            triggered++;
-            updateProgressNote('Phase 1 of 2: Triggering shares\u2026 (' + triggered + '\u2009/\u2009' + total + ')');
+          chrome.runtime.sendMessage({ type: 'TRIGGER_SHARE', albumUrl: album.url }, function(resp) {
+            if (chrome.runtime.lastError) {/* ignore — service worker may have restarted */}
+            var shareUrl = (resp && resp.shareUrl) || '';
+            album.shareUrl = shareUrl || album.url; // store on album for Phase 2
+            var linked = shareUrl.indexOf('photos.app.goo.gl') !== -1;
+            setAlbumStatus(album.url, linked ? 'linked' : 'failed');
+            done++;
+            updateProgressNote('Enabling sharing\u2026 (' + done + '\u2009/\u2009' + total + ')');
             resolve();
           });
         } catch(e) {
-          setAlbumStatus(album.url, 'triggered');
-          triggered++;
+          album.shareUrl = album.url;
+          setAlbumStatus(album.url, 'failed');
+          done++;
           resolve();
         }
       });
     });
   }, Promise.resolve()).then(function() {
 
-    // ── Phase 2: Collect share URLs from the Shared Albums page ───────────────
-    // Open photos.google.com/sharing once — the content script there scans
-    // script-tag data to match each album ID to its photos.app.goo.gl URL.
-    albums.forEach(function(album) { setAlbumStatus(album.url, 'collecting'); });
-    updateProgressNote('Phase 2 of 2: Collecting share links\u2026');
-
-    return new Promise(function(resolve) {
-      try {
-        chrome.runtime.sendMessage(
-          { type: 'COLLECT_FROM_SHARING_PAGE', albums: albums },
-          function(response) {
-            if (chrome.runtime.lastError) { resolve({}); return; }
-            resolve((response && response.results) || {});
-          }
-        );
-      } catch(e) { resolve({}); }
-    });
-
-  }).then(function(shareResults) {
-
-    // Merge share URLs back into albums; fall back to original URL on miss.
-    var albumsWithUrls = albums.map(function(album) {
-      var albumId  = (album.url.match(/\/album\/([A-Za-z0-9_-]{15,})/) || [])[1] || '';
-      var shareUrl = (shareResults && albumId && shareResults[albumId]) || album.url;
-      var linked   = shareUrl.indexOf('photos.app.goo.gl') !== -1;
-      setAlbumStatus(album.url, linked ? 'linked' : 'failed');
-      return { title: album.title, url: shareUrl, thumbnail: album.thumbnail };
-    });
-
-    // ── Phase 3: Fetch thumbnails (parallel) ──────────────────────────────────
+    // ── Phase 2: Fetch thumbnails in parallel ─────────────────────────────────
     var thumbsDone = 0;
     updateProgressNote('Preparing thumbnails\u2026 (0\u2009/\u2009' + total + ')');
 
-    return Promise.all(albumsWithUrls.map(function(album) {
+    return Promise.all(albums.map(function(album) {
       return fetchThumbnailDataUrl(album.thumbnail).then(function(dataUrl) {
         thumbsDone++;
         updateProgressNote('Preparing thumbnails\u2026 (' + thumbsDone + '\u2009/\u2009' + total + ')');
         return {
           title:     album.title,
-          url:       album.url,
-          thumbnail: album.thumbnail, // CDN URL — stored in =IMAGE() formula in Sheets
-          dataUrl:   dataUrl          // data URL — stored in col 6 for web app display
+          url:       album.shareUrl || album.url, // photos.app.goo.gl from Phase 1
+          thumbnail: album.thumbnail,             // CDN URL — stored in =IMAGE() formula
+          dataUrl:   dataUrl                      // data URL — stored in col 6 for gallery
         };
       });
     }));
@@ -949,228 +924,66 @@ function clickCreateLinkSilent() {
 }
 
 // ── CLICK_SHARE_ONLY handler ──────────────────────────────────────────────────
-// Invoked by background.js when an album tab is opened for Phase 1 (triggering).
-// Finds the Share button, clicks it, then clicks "Create link" if needed.
-// Responds with { ok, pageUrl, foundBtn, btnDetails, clickedCreateLink, attempts }
-// so background.js can log everything to the service worker console.
+// Invoked by background.js when an album tab is opened for Phase 1.
+// Finds the Share button, clicks it, enables link sharing (clicks "Create link"
+// if needed), then waits for the photos.app.goo.gl URL to appear in the DOM.
+// Responds with { ok, pageUrl, shareUrl, foundBtn, attempts } so the share URL
+// can be returned to the caller without a separate Phase 2 page scan.
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   if (msg.type !== 'CLICK_SHARE_ONLY') return false;
 
-  var pageUrl = location.href;
-  var responded = false;
+  var pageUrl    = location.href;
+  var responded  = false;
+  var btnClicked = false;
+  var btnAttempts = 0;
+  var domObserver, urlTimeout;
 
-  function finish(foundBtn, btnDetails, clickedCreateLink, attempts) {
-    if (responded) return;
-    responded = true;
-    sendResponse({ ok: true, pageUrl: pageUrl, foundBtn: foundBtn,
-                   btnDetails: btnDetails, clickedCreateLink: clickedCreateLink,
-                   attempts: attempts });
+  // Check if the album already has a share URL in the page before touching the UI.
+  var existing = findShareUrl();
+  if (existing) {
+    sendResponse({ ok: true, pageUrl: pageUrl, shareUrl: existing,
+                   foundBtn: false, alreadyShared: true, attempts: 0 });
+    return true;
   }
 
-  var btnAttempts = 0;
+  function respond(shareUrl) {
+    if (responded) return;
+    responded = true;
+    if (domObserver) { domObserver.disconnect(); domObserver = null; }
+    if (urlTimeout)  { clearTimeout(urlTimeout);  urlTimeout  = null; }
+    sendResponse({ ok: true, pageUrl: pageUrl, shareUrl: shareUrl || '',
+                   foundBtn: btnClicked, attempts: btnAttempts });
+  }
+
+  // Watch the DOM for the share URL to appear after the dialog opens and
+  // the "Create link" / "Get link" button is clicked.
+  domObserver = new MutationObserver(function() {
+    var url = findShareUrl();
+    if (url) { respond(url); return; }
+    // Keep nudging "Create link" if the dialog is open but the URL isn't there yet.
+    if (btnClicked) clickCreateLinkSilent();
+  });
+  domObserver.observe(document.body, { childList: true, subtree: true });
+
+  // Timeout: if the URL never appears, respond with '' so the tab gets closed.
+  urlTimeout = setTimeout(function() { respond(''); }, 18000);
+
+  // Poll for the Share button (SPA may still be rendering the toolbar).
   var btnInterval = setInterval(function() {
     btnAttempts++;
     var btn = findShareButtonEl();
     if (btn) {
       clearInterval(btnInterval);
-      var btnDetails = {
-        tag:       btn.tagName,
-        ariaLabel: btn.getAttribute('aria-label'),
-        tooltip:   btn.getAttribute('data-tooltip'),
-        title:     btn.getAttribute('title'),
-        text:      (btn.textContent || '').trim().substring(0, 60)
-      };
+      btnClicked = true;
       btn.click();
-      // Give dialog time to open, then click "Create link" if needed.
-      setTimeout(function() {
-        var clicked = false;
-        // Patch clickCreateLinkSilent to detect whether it fired.
-        var keywords = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
-        var els = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
-        for (var i = 0; i < els.length; i++) {
-          var text = (els[i].textContent || els[i].getAttribute('aria-label') || '').toLowerCase().trim();
-          for (var k = 0; k < keywords.length; k++) {
-            if (text === keywords[k] || text.indexOf(keywords[k]) === 0) {
-              els[i].click(); clicked = true; break;
-            }
-          }
-          if (clicked) break;
-        }
-        finish(true, btnDetails, clicked, btnAttempts);
-      }, 1500);
       return;
     }
     if (btnAttempts >= 20) { // 20 × 500 ms = 10 s
       clearInterval(btnInterval);
-      finish(false, null, false, btnAttempts);
+      respond(''); // Share button never appeared — album tab may not have rendered fully
     }
   }, 500);
 
   return true;
 });
 
-// ── WATCH_SHARING_PAGE_CONTENT handler ───────────────────────────────────────
-// Runs on photos.google.com/sharing (the Shared Albums page).
-// Invoked by background.js after Phase 1 completes, with the list of albums
-// whose sharing was triggered. Scans script-tag SSR data for each album's ID
-// and the photos.app.goo.gl URL stored nearby. Uses a MutationObserver to catch
-// albums that are lazily added to the page. Responds with:
-//   { results: { albumId: 'https://photos.app.goo.gl/...', ... } }
-// for every album whose share URL was found.
-chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
-  if (msg.type !== 'WATCH_SHARING_PAGE_CONTENT') return false;
-
-  var albums   = msg.albums || [];
-  var albumIds = albums.map(function(a) {
-    return (a.url.match(/\/album\/([A-Za-z0-9_-]{15,})/) || [])[1] || '';
-  });
-  var SHARE_RE = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/;
-
-  var results    = {};
-  var dbg        = []; // accumulated debug lines, returned to background for logging
-  var responded  = false;
-  var observer   = null;
-  var watchTimer = null;
-
-  dbg.push('page: ' + location.href);
-  dbg.push('looking for album IDs: ' + JSON.stringify(albumIds));
-  dbg.push('total scripts on page: ' + document.scripts.length);
-
-  function finish() {
-    if (responded) return;
-    responded = true;
-    if (observer)   { observer.disconnect(); observer = null; }
-    if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; }
-    dbg.push('finish() — final results: ' + JSON.stringify(results));
-    sendResponse({ results: results, debug: dbg });
-  }
-
-  function allFound() {
-    return albumIds.every(function(id) { return !id || results[id]; });
-  }
-
-  function scanScripts() {
-    // Build a complete map of (albumId → shareUrl) using greedy closest-distance
-    // pairing. A simple windowed search fails on the sharing page because multiple
-    // albums' data is stored contiguously — a ±2 KB window around album A can
-    // overlap album B's share URL. Instead we collect ALL (albumId, pos) and
-    // (shareUrl, pos) items in each script, then greedily pair each album ID with
-    // its nearest share URL so every URL is assigned to at most one album.
-    var SHARE_RE_G = /https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/g;
-    var scripts = document.scripts;
-
-    for (var s = 0; s < scripts.length; s++) {
-      var src = scripts[s].textContent || '';
-
-      // Only spend time on scripts that contain at least one unresolved album ID.
-      var relevant = albumIds.filter(function(id) { return id && !results[id] && src.indexOf(id) !== -1; });
-      if (!relevant.length) continue;
-
-      dbg.push('script[' + s + '] len=' + src.length + ' contains IDs: ' + JSON.stringify(relevant));
-
-      // Collect album-ID positions (first occurrence per ID in this script).
-      var idItems = [];
-      relevant.forEach(function(id) {
-        var idx = src.indexOf(id);
-        if (idx !== -1) { idItems.push({ id: id, pos: idx }); dbg.push('  ID ' + id + ' at pos ' + idx); }
-      });
-
-      // Collect all share-URL positions in this script.
-      SHARE_RE_G.lastIndex = 0;
-      var urlItems = [];
-      var m;
-      while ((m = SHARE_RE_G.exec(src)) !== null) {
-        urlItems.push({ url: m[0], pos: m.index });
-      }
-      dbg.push('  share URLs found in script[' + s + ']: ' + urlItems.length +
-        (urlItems.length ? ' — ' + urlItems.map(function(u) { return u.url + '@' + u.pos; }).join(', ') : ''));
-      if (!urlItems.length) continue;
-
-      // Build candidate (albumId, shareUrl, distance) pairs within 4 KB.
-      var candidates = [];
-      idItems.forEach(function(idItem) {
-        urlItems.forEach(function(urlItem) {
-          var dist = Math.abs(urlItem.pos - idItem.pos);
-          if (dist < 4000) candidates.push({ id: idItem.id, url: urlItem.url, dist: dist });
-        });
-      });
-      dbg.push('  candidates: ' + candidates.map(function(c) {
-        return c.id + ' → ' + c.url + ' dist=' + c.dist; }).join(' | '));
-
-      // Greedy assignment: sort by distance ascending, assign shortest pairs first.
-      // Each albumId and each shareUrl is used at most once.
-      candidates.sort(function(a, b) { return a.dist - b.dist; });
-      var usedUrls = {};
-      candidates.forEach(function(c) {
-        if (!results[c.id] && !usedUrls[c.url]) {
-          results[c.id] = c.url;
-          usedUrls[c.url] = true;
-          dbg.push('  ASSIGNED ' + c.id + ' → ' + c.url + ' (dist ' + c.dist + ')');
-        } else {
-          dbg.push('  SKIPPED ' + c.id + ' → ' + c.url + ' (already used)');
-        }
-      });
-    }
-  }
-
-  function scanAlbumLinks() {
-    // Supplement script scan: on the sharing page each album card has a link
-    // like <a href="…/album/ALBUM_ID">. Walk up from that link to find a
-    // photos.app.goo.gl URL in the same card's subtree or text content.
-    albumIds.forEach(function(id) {
-      if (!id || results[id]) return;
-      var links = document.querySelectorAll('a[href*="' + id + '"]');
-      dbg.push('scanAlbumLinks: ' + id + ' — found ' + links.length + ' anchor(s) with this ID in href');
-      for (var i = 0; i < links.length; i++) {
-        var container = links[i];
-        for (var depth = 0; depth < 8 && container; depth++) {
-          // Check for a share anchor in this subtree.
-          var shareAnchors = container.querySelectorAll('a[href*="photos.app.goo.gl"]');
-          if (shareAnchors.length) {
-            var m = (shareAnchors[0].href || '').match(SHARE_RE);
-            if (m) {
-              results[id] = m[0];
-              dbg.push('  DOM anchor match at depth ' + depth + ': ' + m[0]);
-              return;
-            }
-          }
-          // Also check visible text content for the share URL pattern.
-          var m2 = (container.textContent || '').match(SHARE_RE);
-          if (m2) {
-            results[id] = m2[0];
-            dbg.push('  DOM textContent match at depth ' + depth + ': ' + m2[0]);
-            return;
-          }
-          container = container.parentElement;
-        }
-      }
-    });
-  }
-
-  var scanCount = 0;
-  function scan() {
-    scanCount++;
-    if (scanCount === 1 || scanCount % 10 === 0) dbg.push('scan() #' + scanCount);
-    scanScripts();
-    scanAlbumLinks();
-    if (allFound()) finish();
-  }
-
-  // Initial scan
-  scan();
-
-  if (!allFound()) {
-    dbg.push('not all found after initial scan — starting MutationObserver (45 s timeout)');
-    // Watch for DOM / script changes (lazy-loaded album cards).
-    observer = new MutationObserver(function() { scan(); });
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    // Respond with whatever we have after 45 s to avoid holding the channel open.
-    watchTimer = setTimeout(function() {
-      dbg.push('timeout reached — responding with partial results');
-      finish();
-    }, 45000);
-  }
-
-  return true;
-});
