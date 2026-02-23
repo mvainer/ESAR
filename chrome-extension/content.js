@@ -942,6 +942,10 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   var createLinkClicked = false;
   var btnAttempts       = 0;
   var domObserver, urlTimeout, diagInterval, urlPollInterval;
+  // createLinkClicked: set true ONLY after a *visible* "Create link" button is clicked.
+  // hiddenCreateLinkClicked: set true after the hidden navigation button is clicked once
+  // (clicking "Create link" in dialog[0] opens dialog[1], which has the real button).
+  var hiddenCreateLinkClicked = false;
 
   // Send a log line both to the local console and to the service worker so it
   // appears in the extension's persistent console even after the tab closes.
@@ -1008,50 +1012,46 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   }, 3000);
 
   // Watch the DOM for the share URL.
-  // When a "Create link"-type button appears, log full details about the element
-  // (outerHTML, rect, disabled, all sibling buttons) so we can identify the correct
-  // target, then attempt to click it. If URL doesn't appear in 500 ms, show banner.
+  // The Google Photos Share flow is two steps:
+  //   1. dialog[0] ("Invite to album") has a hidden "Create link" element — clicking
+  //      it navigates to dialog[1] ("Create link to share").
+  //   2. dialog[1] has the *visible* "Create link" button that enables sharing.
+  // We click the hidden navigation element once, then click the visible action button.
+  // createLinkClicked is only set true after a VISIBLE button is clicked so we don't
+  // stop after the navigation step.
   domObserver = new MutationObserver(function() {
     var url = findShareUrl();
     if (url) { respond(url, 'url-found'); return; }
-    if (btnClicked && !createLinkClicked) {
-      var clBtn = findCreateLinkBtn();
-      if (clBtn) {
-        createLinkClicked = true;
 
-        // ── Diagnostic: log everything about this element ──────────────────────
-        var rect = clBtn.getBoundingClientRect();
-        relayLog('CREATE_LINK_BTN found:' +
-                 ' tag=' + clBtn.tagName +
-                 ' disabled=' + clBtn.disabled +
-                 ' visible=' + (rect.width > 0 && rect.height > 0) +
-                 ' rect=' + JSON.stringify({ top: Math.round(rect.top), left: Math.round(rect.left), w: Math.round(rect.width), h: Math.round(rect.height) }));
-        relayLog('CREATE_LINK_BTN outerHTML: ' + clBtn.outerHTML.substring(0, 400));
-        // Log every clickable element on the page so we can compare
-        var allBtns = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
-        var btnSummary = [];
-        for (var bi = 0; bi < Math.min(allBtns.length, 30); bi++) {
-          var b = allBtns[bi];
-          var bRect = b.getBoundingClientRect();
-          if (bRect.width === 0 && bRect.height === 0) continue; // skip hidden
-          btnSummary.push('"' + (b.textContent || b.getAttribute('aria-label') || '').trim().substring(0, 30) + '"');
-        }
-        relayLog('Visible buttons on page: [' + btnSummary.join(', ') + ']');
-        // ──────────────────────────────────────────────────────────────────────
+    if (!btnClicked || createLinkClicked) return;
 
-        relayLog('CLICK_SHARE_ONLY: clicking element');
-        clBtn.click();
+    var clBtn = findCreateLinkBtn();
+    if (!clBtn) return;
 
-        // 500 ms to observe result; if URL still absent, show user banner
-        setTimeout(function() {
-          if (responded) return;
-          if (!findShareUrl()) {
-            relayLog('CLICK_SHARE_ONLY: click had no effect after 500ms — showing user banner');
-            injectShareBanner();
-          }
-        }, 500);
-      }
+    var rect = clBtn.getBoundingClientRect();
+    var isVisible = rect.width > 0 && rect.height > 0;
+
+    if (isVisible) {
+      // Step 2: visible button in dialog[1] — this is the real share action.
+      createLinkClicked = true;
+      relayLog('CREATE_LINK_BTN visible: clicking "' + clBtn.textContent.trim().substring(0, 40) + '"' +
+               ' tag=' + clBtn.tagName +
+               ' rect=' + JSON.stringify({ top: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) }));
+      clBtn.click();
+      // Show banner if URL still doesn't appear within 500 ms.
+      setTimeout(function() {
+        if (responded || findShareUrl()) return;
+        relayLog('CLICK_SHARE_ONLY: visible click had no effect — showing user banner');
+        injectShareBanner();
+      }, 500);
+    } else if (!hiddenCreateLinkClicked) {
+      // Step 1: hidden navigation element in dialog[0] — click once to open dialog[1].
+      hiddenCreateLinkClicked = true;
+      relayLog('CREATE_LINK_BTN hidden: clicking navigation element (opens dialog[1])' +
+               ' outerHTML: ' + clBtn.outerHTML.substring(0, 200));
+      clBtn.click();
     }
+    // If hiddenCreateLinkClicked && !isVisible: already navigated, waiting for dialog[1].
   });
   domObserver.observe(document.body, { childList: true, subtree: true });
 
