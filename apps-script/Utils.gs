@@ -52,7 +52,11 @@ function resetDashboard() {
 function testFetchAlbumShareUrl() {
   // Paste a real album ID from photos@kcesar.org here (the long string after /album/ in the URL).
   // Use one you know is already shared so there should be a photos.app.goo.gl URL in the page.
-  var ALBUM_ID = 'REPLACE_WITH_REAL_ALBUM_ID';
+  // POC RESULT (2026-02): UrlFetchApp with ScriptApp.getOAuthToken() is redirected to the
+  // Google sign-in page for photos.google.com — the site requires session cookies, not a
+  // Bearer token. Apps Script CANNOT fetch album pages. Share URL collection must stay in
+  // the Chrome extension (which runs in the browser with the user's session cookies).
+  var ALBUM_ID = 'AF1QipNC1JpThr3l64lxFAj8ySMmUbb74zzAAyPVhGYG';
 
   var url = 'https://photos.google.com/u/0/album/' + ALBUM_ID;
   Logger.log('Fetching: ' + url);
