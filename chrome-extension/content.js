@@ -1034,10 +1034,21 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     if (isVisible) {
       // Step 2: visible button in dialog[1] — this is the real share action.
       createLinkClicked = true;
-      relayLog('CREATE_LINK_BTN visible: clicking "' + clBtn.textContent.trim().substring(0, 40) + '"' +
+      var cx = Math.round(rect.left + rect.width  / 2);
+      var cy = Math.round(rect.top  + rect.height / 2);
+      relayLog('CREATE_LINK_BTN visible: dispatching mousedown+mouseup+click "' +
+               clBtn.textContent.trim().substring(0, 40) + '"' +
                ' tag=' + clBtn.tagName +
-               ' rect=' + JSON.stringify({ top: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) }));
-      clBtn.click();
+               ' rect={x:' + cx + ',y:' + cy + ',w:' + Math.round(rect.width) + ',h:' + Math.round(rect.height) + '}');
+      // Dispatch full mouse event sequence with real coordinates so that any
+      // event-delegation framework (e.g. Google's JsAction) registers the click.
+      ['mousedown', 'mouseup', 'click'].forEach(function(type) {
+        clBtn.dispatchEvent(new MouseEvent(type, {
+          bubbles: true, cancelable: true, view: window,
+          clientX: cx, clientY: cy, screenX: cx, screenY: cy,
+          buttons: 1, button: 0,
+        }));
+      });
       // Show banner if URL still doesn't appear within 500 ms.
       setTimeout(function() {
         if (responded || findShareUrl()) return;
@@ -1106,16 +1117,25 @@ function injectShareBanner() {
 }
 
 // Find "Create link" / "Get link" / "Turn on link sharing" button.
+// Prefers VISIBLE elements (non-zero bounding rect) so that when both dialog[0]'s
+// hidden nav element AND dialog[1]'s visible action button are in the DOM, the
+// visible one is returned. Falls back to the first hidden match (for step 1).
 // Returns the element (without clicking it), or null.
 function findCreateLinkBtn() {
   var keywords = ['create link', 'get link', 'turn on link sharing', 'get shareable link'];
   var els = document.querySelectorAll('button, [role="button"], [role="menuitem"]');
+  var firstMatch = null;
   for (var i = 0; i < els.length; i++) {
     var text = (els[i].textContent || els[i].getAttribute('aria-label') || '').toLowerCase().trim();
     for (var k = 0; k < keywords.length; k++) {
-      if (text === keywords[k] || text.indexOf(keywords[k]) === 0) return els[i];
+      if (text === keywords[k] || text.indexOf(keywords[k]) === 0) {
+        var r = els[i].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return els[i]; // visible → return immediately
+        if (!firstMatch) firstMatch = els[i];             // hidden → remember as fallback
+        break; // no need to check more keywords for this element
+      }
     }
   }
-  return null;
+  return firstMatch;
 }
 
