@@ -489,29 +489,20 @@ function scrapeAlbums() {
 function getBestTitle(link) {
   // 1. aria-label on the link element itself
   var label = link.getAttribute('aria-label');
-  if (label && label !== 'Google Photos') {
-    console.log('[ESAR]   title: aria-label (raw):', JSON.stringify(label), '→', JSON.stringify(cleanAriaLabel(label)));
-    return cleanAriaLabel(label);
-  }
+  if (label && label !== 'Google Photos') return label.trim();
 
   // 2. aria-label on the nearest ancestor that has one
   var el = link.parentElement;
   for (var i = 0; i < 4; i++) {
     if (!el) break;
     label = el.getAttribute('aria-label');
-    if (label && label !== 'Google Photos') {
-      console.log('[ESAR]   title: ancestor[' + i + '] aria-label (raw):', JSON.stringify(label), '→', JSON.stringify(cleanAriaLabel(label)));
-      return cleanAriaLabel(label);
-    }
+    if (label && label !== 'Google Photos') return label.trim();
     el = el.parentElement;
   }
 
   // 3. alt attribute on a child <img>
   var img = link.querySelector('img');
-  if (img && img.alt && img.alt !== 'Google Photos') {
-    console.log('[ESAR]   title: img.alt:', JSON.stringify(img.alt));
-    return img.alt.trim();
-  }
+  if (img && img.alt && img.alt !== 'Google Photos') return img.alt.trim();
 
   // 4. visible text content (last resort) — strip item count and menu noise
   var text = link.textContent
@@ -519,22 +510,9 @@ function getBestTitle(link) {
     .replace(/More options/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (text && text !== 'Google Photos') {
-    console.log('[ESAR]   title: textContent (fallback):', JSON.stringify(text));
-    return text;
-  }
+  if (text && text !== 'Google Photos') return text;
 
   return '';
-}
-
-// Google Photos /albums aria-labels append slug metadata after underscores:
-// e.g. "Basic Training 2021-2022_2021-22_Course 2_Course 2 #"
-//                                ^ slug metadata starts here
-// Strip from the first underscore onwards; fall back to full label if empty.
-function cleanAriaLabel(label) {
-  if (!label) return '';
-  var cleaned = label.replace(/_.*$/, '').replace(/[#\s]+$/, '').trim();
-  return cleaned || label.trim();
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
