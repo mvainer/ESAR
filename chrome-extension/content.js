@@ -495,10 +495,18 @@ function scrapeAlbums() {
       }
     }
 
-    albums.push({ title: title, url: href, thumbnail: thumbnail });
+    albums.push({ title: title, url: href, thumbnail: normalizeThumbUrl(thumbnail) });
   });
 
   return albums;
+}
+
+// Convert session-scoped Google Photos CDN URLs (photos.fife.usercontent.google.com,
+// photos.east1.usercontent.google.com, etc.) to the standard lh3.googleusercontent.com
+// domain, which is publicly accessible for images in shared albums without session cookies.
+function normalizeThumbUrl(url) {
+  if (!url) return url;
+  return url.replace(/^https?:\/\/photos\.\w+\.usercontent\.google\.com\//, 'https://lh3.googleusercontent.com/');
 }
 
 function getBestTitle(link) {
