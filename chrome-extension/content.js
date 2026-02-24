@@ -223,11 +223,19 @@ function findShareUrl() {
     if (mv) return mv[0];
   }
 
-  // 2. Open dialog text content
+  // 2. Open dialog text content and element attributes (covers data-url, href, jsdata, etc.)
   var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
   for (var i = 0; i < dialogs.length; i++) {
     var mt = (dialogs[i].textContent || '').match(SHARE_RE);
     if (mt) return mt[0];
+    var allEls = dialogs[i].querySelectorAll('*');
+    for (var e = 0; e < allEls.length; e++) {
+      var attrs = allEls[e].attributes;
+      for (var a = 0; a < attrs.length; a++) {
+        var ma = (attrs[a].value || '').match(SHARE_RE);
+        if (ma) return ma[0];
+      }
+    }
   }
 
   // 3. Anchor hrefs visible in the Share dialog
@@ -968,7 +976,9 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   // createLinkClicked: set true ONLY after a *visible* "Create link" button is clicked.
   // hiddenCreateLinkClicked: set true after the hidden navigation button is clicked once
   // (clicking "Create link" in dialog[0] opens dialog[1], which has the real button).
+  // copyLinkClicked: set true when we take the already-shared path (dialog shows "Copy link").
   var hiddenCreateLinkClicked = false;
+  var copyLinkClicked         = false;
 
   // Send a log line both to the local console and to the service worker so it
   // appears in the extension's persistent console even after the tab closes.
@@ -1058,14 +1068,38 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
 
     if (!btnClicked || createLinkClicked) return;
 
-    if (!hiddenCreateLinkClicked) {
-      // Step 1: click the "Create link" nav element in dialog[0] to open dialog[1].
+    if (!hiddenCreateLinkClicked && !copyLinkClicked) {
       var navEl = findCreateLinkBtn();
-      if (!navEl) return;
-      hiddenCreateLinkClicked = true;
-      relayLog('STEP1 nav click jsname=' + (navEl.getAttribute('jsname') || navEl.tagName));
-      navEl.click();
-    } else {
+      if (navEl) {
+        // Step 1: standard two-step flow — nav element opens dialog[1].
+        hiddenCreateLinkClicked = true;
+        relayLog('STEP1 nav click jsname=' + (navEl.getAttribute('jsname') || navEl.tagName));
+        navEl.click();
+      } else {
+        // Already-shared album: dialog shows "Copy link" with no "Create link" nav.
+        // Click "Copy link" (copies photos.app.goo.gl URL to clipboard) then read it.
+        // The window is focused before CLICK_SHARE_ONLY fires (see background.js line ~178)
+        // so navigator.clipboard.readText() works with the clipboardRead permission.
+        var copyBtn = findCopyLinkInDialog();
+        if (!copyBtn) return;
+        copyLinkClicked = true;
+        relayLog('ALREADY_SHARED: Copy link btn found — clicking and reading clipboard');
+        copyBtn.click();
+        setTimeout(function() {
+          navigator.clipboard.readText().then(function(text) {
+            var m = text.match(/https:\/\/photos\.app\.goo\.gl\/[A-Za-z0-9]+/);
+            if (m) {
+              relayLog('ALREADY_SHARED: clipboard URL = ' + m[0]);
+              respond(m[0], 'clipboard');
+            } else {
+              relayLog('ALREADY_SHARED: clipboard text did not contain share URL: "' + text.substring(0, 100) + '"');
+            }
+          }).catch(function(e) {
+            relayLog('ALREADY_SHARED: clipboard read failed: ' + e.message);
+          });
+        }, 400);
+      }
+    } else if (hiddenCreateLinkClicked) {
       // Step 2: click the real "Create link" action button inside dialog[1].
       // Uses findActionCreateLinkBtn() which scopes the search to the dialog
       // whose heading is "Create link to share" — avoids re-clicking the nav DIV.
@@ -1141,8 +1175,25 @@ function injectShareBanner() {
     'font-family:Google Sans,Roboto,Arial,sans-serif',
     'box-shadow:0 2px 8px rgba(0,0,0,.3)', 'letter-spacing:.1px',
   ].join(';');
-  banner.textContent = '\uD83D\uDD17  ESAR: Opening share dialog\u2026 click \u201CCreate link\u201D if prompted \u2014 this window closes automatically.';
+  banner.textContent = '\uD83D\uDD17  ESAR: Opening share dialog\u2026 click \u201CCreate link\u201D or \u201CCopy link\u201D if prompted \u2014 this window closes automatically.';
   document.body.appendChild(banner);
+}
+
+// Find the "Copy link" button inside an open dialog — present for already-shared albums
+// where link sharing is already enabled and the dialog skips the "Create link" step.
+function findCopyLinkInDialog() {
+  var dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+  for (var d = 0; d < dialogs.length; d++) {
+    var els = dialogs[d].querySelectorAll('button, [role="button"]');
+    for (var i = 0; i < els.length; i++) {
+      var text = (els[i].textContent || els[i].getAttribute('aria-label') || '').trim().toLowerCase();
+      if (text === 'copy link') {
+        var r = els[i].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return els[i];
+      }
+    }
+  }
+  return null;
 }
 
 // Find the nav "Create link" element in dialog[0] — used for step 1.
